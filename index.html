@@ -799,8 +799,6 @@
     }
   ];
 
-  const DEEPSEEK_API_KEY = "sk-6b31b3f63cb54b908cf1734f929439a3";
-
   /* ===================== Game state ===================== */
   const state = {
     config: {},
@@ -841,8 +839,7 @@
       topic: document.getElementById('f-topic').value.trim() || "General Knowledge",
       difficulty: document.getElementById('f-difficulty').value,
       mode: document.querySelector('input[name="mode"]:checked').value,
-      qtype: document.getElementById('f-qtype').value,
-      apiKey: DEEPSEEK_API_KEY
+      qtype: document.getElementById('f-qtype').value
     };
     state.mode = state.config.mode;
 
@@ -859,7 +856,7 @@
     }
 
     if(state.usingFallback){
-      statusEl.textContent = "Using sample question set (no valid DeepSeek response).";
+      statusEl.textContent = "Using sample question set (no valid AI response).";
     }
 
     initBattle();
@@ -868,30 +865,29 @@
     startBtn.textContent = "⚡ START GAME";
   });
 
-  /* ===================== DeepSeek API integration ===================== */
-  async function callDeepSeek(apiKey, messages, jsonMode){
+  /* ===================== AI integration (via Netlify Function proxy) =====================
+     The real API key lives server-side as a Netlify environment variable and is read by
+     netlify/functions/llm-proxy.js (currently backed by Groq) — it never reaches the
+     browser or the page source. To switch providers again later, just point the fetch
+     path below at a different function and swap the function's own upstream call. */
+  async function callAI(messages, jsonMode){
     const controller = new AbortController();
     const timeout = setTimeout(()=>controller.abort(), 25000);
     try{
-      const res = await fetch("https://api.deepseek.com/chat/completions", {
+      const res = await fetch("/.netlify/functions/llm-proxy", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": "Bearer " + apiKey
-        },
+        headers: { "Content-Type": "application/json" },
         signal: controller.signal,
         body: JSON.stringify({
-          model: "deepseek-chat",
           messages: messages,
-          temperature: 0.7,
-          response_format: jsonMode ? { type: "json_object" } : undefined
+          jsonMode: !!jsonMode
         })
       });
       clearTimeout(timeout);
-      if(!res.ok) throw new Error("DeepSeek API responded with status " + res.status);
+      if(!res.ok) throw new Error("Proxy responded with status " + res.status);
       const data = await res.json();
       const content = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
-      if(!content) throw new Error("Empty DeepSeek response");
+      if(!content) throw new Error("Empty AI response");
       return content;
     }catch(err){
       clearTimeout(timeout);
@@ -913,11 +909,6 @@
   }
 
   async function generateQuestions(cfg){
-    if(!cfg.apiKey){
-      state.usingFallback = true;
-      return FALLBACK_QUESTIONS.slice();
-    }
-
     const qCount = 5;
     const typeInstruction = cfg.qtype === "mixed"
       ? "Mix multiple_choice and short_answer question types roughly evenly."
@@ -934,7 +925,7 @@ ${typeInstruction}`;
 
     const userPrompt = `Topic: ${cfg.topic}\nDifficulty: ${cfg.difficulty}\nGenerate the questions now as raw JSON only.`;
 
-    const content = await callDeepSeek(cfg.apiKey, [
+    const content = await callAI([
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt }
     ], true);
@@ -959,13 +950,10 @@ ${typeInstruction}`;
   }
 
   async function gradeShortAnswer(cfg, question, studentAnswer){
-    if(!cfg.apiKey){
-      return heuristicGrade(question, studentAnswer);
-    }
     try{
       const systemPrompt = `You are grading a student's short-answer response for an educational game. Respond with ONLY a raw JSON object: {"score": number, "max_score": 2, "feedback": string}. Score from 0 to 2 based on the rubric provided. Feedback should be one short encouraging sentence explaining the score.`;
       const userPrompt = `Question: ${question.question}\nIdeal answer: ${question.ideal_answer || "N/A"}\nRubric: ${question.rubric || "Award full marks for a correct, relevant answer; partial marks for a partially correct answer; zero for incorrect or unrelated answers."}\nStudent answer: ${studentAnswer}\n\nRespond with raw JSON only.`;
-      const content = await callDeepSeek(cfg.apiKey, [
+      const content = await callAI([
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt }
       ], true);
