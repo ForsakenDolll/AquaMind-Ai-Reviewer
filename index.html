@@ -884,7 +884,7 @@
           msg = (typeof errField === 'string') ? errField : (errField && errField.message) || '';
           if(data.detail) msg += (msg ? ' — ' : '') + data.detail;
         }
-        throw new AIError(msg || ('HTTP ' + res.status), { status: res.status, raw: raw.slice(0, 300) });
+        throw new AIError(msg || ('HTTP ' + res.status), { status: res.status, raw: raw.slice(0, 300), source: data && data.source });
       }
       if(!data){
         throw new AIError('The proxy answered with something that is not JSON: ' + raw.slice(0, 120), { code:'NOT_JSON', status: res.status });
@@ -920,6 +920,21 @@
     } else if(err && (err.code === 'BAD_JSON' || err.code === 'BAD_FORMAT' || err.code === 'EMPTY')){
       info.title = 'The AI replied in an unexpected format';
       info.hint = 'The proxy and key work, but the model returned something the game could not read. Try again.';
+    } else if(err && err.source === 'groq'){
+      // The proxy is working and reached Groq; this is what Groq itself said.
+      if(status === 401 || status === 403){
+        info.title = 'Groq rejected the API key (' + status + ')';
+        info.hint = 'The key is invalid, revoked, or was pasted with extra spaces. Fix GROQ_API_KEY in Netlify and redeploy.';
+      } else if(status === 429){
+        info.title = 'Groq rate limit / quota reached (429)';
+        info.hint = 'Wait a minute and try again, or check your usage limits in the Groq console.';
+      } else if(/model|decommission|does not exist|not found/i.test(info.detail)){
+        info.title = 'Groq says this model is unavailable (' + status + ')';
+        info.hint = 'Groq retires models over time (llama-3.3-70b-versatile was shut down on Aug 16, 2026). In Netlify add an environment variable GROQ_MODEL set to a current model such as openai/gpt-oss-120b (see console.groq.com/docs/models), then trigger a new deploy.';
+      } else {
+        info.title = 'Groq returned an error (' + status + ')';
+        info.hint = 'Your proxy and key are working and reached Groq. The message above is what Groq replied.';
+      }
     } else if(status === 404){
       info.title = 'Function not found (404)';
       info.detail = 'Netlify has no function at ' + AI_ENDPOINT;
