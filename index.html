@@ -1104,6 +1104,12 @@ ${typeInstruction}`;
   }
 
   function spawnEnemyVisual(enemy){
+    // The previous enemy's death animation leaves this card faded out (opacity 0, sunk and
+    // rotated). Reset every leftover animation class so the new enemy is actually visible.
+    const enemyCard = document.getElementById('card-p2');
+    enemyCard.classList.remove('sprite-death','recoil-hit','lunge','animate-hit','flash-red','swim-in-left','swim-in-right');
+    void enemyCard.offsetWidth; // force a reflow so the entrance animation restarts cleanly
+
     state.p2.hp = enemy.hitsRemaining;
     state.p2.maxHp = enemy.maxHits;
     state.p2.name = enemy.type === 'boss' ? 'Boss Shark' : 'Minion Fish';
