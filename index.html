@@ -249,6 +249,54 @@
     box-shadow: 0 0 10px rgba(255,201,107,0.85);
     transform-origin: left center;
   }
+  .rocket-body{
+    position:fixed; z-index:30; pointer-events:none;
+    width:30px; height:13px;
+    background: linear-gradient(90deg, #E8EEF1 0%, #C3CDD3 55%, #8B98A0 100%);
+    border-radius:0 7px 7px 0;
+    box-shadow: 0 0 8px rgba(255,255,255,0.55), 0 0 2px rgba(0,0,0,0.4) inset;
+  }
+  .rocket-body::before{
+    content:''; position:absolute; right:-11px; top:0.5px;
+    border-top:6px solid transparent; border-bottom:6px solid transparent;
+    border-left:11px solid #FF6B6B;
+  }
+  .rocket-body::after{
+    content:''; position:absolute; left:-24px; top:1.5px; width:24px; height:10px;
+    background: linear-gradient(90deg, rgba(255,201,107,0) 0%, #FFC96B 55%, #FF8F4D 100%);
+    border-radius:6px; filter: blur(1px);
+    animation: rocketFlicker .1s steps(2) infinite;
+  }
+  @keyframes rocketFlicker{ 0%{ opacity:0.65; transform:scaleX(0.82); } 100%{ opacity:1; transform:scaleX(1); } }
+
+  .explosion-particle{
+    position:fixed; width:8px; height:8px; border-radius:50%;
+    pointer-events:none; z-index:31;
+    animation: explodeBurst .6s cubic-bezier(.25,.8,.3,1) forwards;
+  }
+  @keyframes explodeBurst{
+    0%{ transform: translate(-50%,-50%) scale(1); opacity:1; }
+    100%{ transform: translate(calc(-50% + var(--tx)), calc(-50% + var(--ty))) scale(0.2); opacity:0; }
+  }
+  .explosion-ring{
+    position:fixed; border-radius:50%; border:4px solid; pointer-events:none; z-index:31;
+    transform: translate(-50%,-50%);
+    animation: explodeRing .5s ease-out forwards;
+  }
+  @keyframes explodeRing{
+    0%{ width:10px; height:10px; opacity:0.9; }
+    100%{ width:150px; height:150px; opacity:0; }
+  }
+  .explosion-flash{
+    position:fixed; width:26px; height:26px; border-radius:50%; pointer-events:none; z-index:31;
+    background: radial-gradient(circle, #FFFFFF 0%, #FFC96B 40%, rgba(255,140,60,0) 75%);
+    transform: translate(-50%,-50%);
+    animation: explodeFlash .3s ease-out forwards;
+  }
+  @keyframes explodeFlash{
+    0%{ width:14px; height:14px; opacity:1; }
+    100%{ width:90px; height:90px; opacity:0; }
+  }
 
   /* expanding impact ring on every hit */
   .impact-ring{
@@ -745,6 +793,74 @@
     setTimeout(()=>dart.remove(), 320);
   }
 
+  function spawnExplosion(x, y, color){
+    const flash = document.createElement('div');
+    flash.className = 'explosion-flash';
+    flash.style.left = x + 'px';
+    flash.style.top = y + 'px';
+    document.body.appendChild(flash);
+    setTimeout(()=>flash.remove(), 320);
+
+    const ring = document.createElement('div');
+    ring.className = 'explosion-ring';
+    ring.style.left = x + 'px';
+    ring.style.top = y + 'px';
+    ring.style.borderColor = color || '#FFC96B';
+    document.body.appendChild(ring);
+    setTimeout(()=>ring.remove(), 520);
+
+    for(let i=0;i<16;i++){
+      const p = document.createElement('div');
+      p.className = 'explosion-particle';
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 30 + Math.random()*70;
+      p.style.setProperty('--tx', Math.cos(angle)*dist + 'px');
+      p.style.setProperty('--ty', Math.sin(angle)*dist + 'px');
+      p.style.left = x + 'px';
+      p.style.top = y + 'px';
+      p.style.background = i % 2 === 0 ? (color || '#FFC96B') : '#FF6B6B';
+      document.body.appendChild(p);
+      setTimeout(()=>p.remove(), 650);
+    }
+  }
+
+  function fireRocket(fromCardId, toCardId, durationMs, onImpact){
+    const fromEl = document.getElementById(fromCardId);
+    const toEl = document.getElementById(toCardId);
+    const fromRect = fromEl.getBoundingClientRect();
+    const toRect = toEl.getBoundingClientRect();
+    const startX = fromRect.left + fromRect.width/2;
+    const startY = fromRect.top + fromRect.height/2;
+    const endX = toRect.left + toRect.width/2;
+    const endY = toRect.top + toRect.height/2;
+    const dx = endX - startX, dy = endY - startY;
+    const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+
+    const rocket = document.createElement('div');
+    rocket.className = 'rocket-body';
+    rocket.style.left = startX + 'px';
+    rocket.style.top = startY + 'px';
+    rocket.style.transform = `translate(-50%,-50%) rotate(${angle}deg)`;
+    rocket.style.transition = `left ${durationMs}ms linear, top ${durationMs}ms linear`;
+    document.body.appendChild(rocket);
+
+    // Two rAF frames: the first commits the starting position, the second
+    // changes left/top so the CSS transition actually animates between them.
+    requestAnimationFrame(()=>{
+      requestAnimationFrame(()=>{
+        rocket.style.left = endX + 'px';
+        rocket.style.top = endY + 'px';
+      });
+    });
+
+    setTimeout(()=>{
+      rocket.remove();
+      spawnExplosion(endX, endY, '#FFC96B');
+      if(onImpact) onImpact();
+    }, durationMs);
+  }
+
+
   function pauseFloat(cardEl){
     const hadFloat = cardEl.classList.contains('animate-float');
     if(hadFloat) cardEl.classList.remove('animate-float');
@@ -1088,7 +1204,7 @@ ${typeInstruction}`;
       el.className = [baseClasses, 'sprite-frameflip', 'shark-sprite', variantClass].filter(Boolean).join(' ');
       el.style.backgroundImage = 'url(' + SHARK_SHEET + ')';
       const scaleAmt = variant === 'boss' ? 1.3 : 1;
-      el.style.transform = `scale(${flip*scaleAmt}, ${scaleAmt})`;
+      el.style.transform = `scale(${scaleAmt}, ${scaleAmt})`;
       startFrameLoop(elId, 9, 1500);
     }
   }
@@ -1360,14 +1476,9 @@ ${typeInstruction}`;
     const attackerCardId = attacker === 'p1' ? 'card-p1' : 'card-p2';
     const defenderCardId = defender === 'p1' ? 'card-p1' : 'card-p2';
     const isMonsterAttacker = (state.mode === 'pve' && attacker === 'p2');
+    const impactDelay = isMonsterAttacker ? 350 : 2000;
 
-    if(isMonsterAttacker){
-      triggerLunge(document.getElementById(attackerCardId));
-    } else {
-      fireHarpoon(attackerCardId, defenderCardId);
-    }
-
-    setTimeout(()=>{
+    function resolveImpact(){
       dealDamage(defender, dmg);
       const willDie = state[defender].hp <= 0;
       if(willDie){
@@ -1377,7 +1488,14 @@ ${typeInstruction}`;
         toast(isCorrect ? "Correct! " + dmg + " damage dealt." : "Not quite — " + dmg + " damage taken.", 1800);
       }
       setTimeout(nextStep, 1200);
-    }, 350);
+    }
+
+    if(isMonsterAttacker){
+      triggerLunge(document.getElementById(attackerCardId));
+      setTimeout(resolveImpact, impactDelay);
+    } else {
+      fireRocket(attackerCardId, defenderCardId, impactDelay, resolveImpact);
+    }
   }
 
   function nextStep(){
