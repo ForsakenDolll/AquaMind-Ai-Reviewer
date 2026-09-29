@@ -833,31 +833,52 @@
     const startY = fromRect.top + fromRect.height/2;
     const endX = toRect.left + toRect.width/2;
     const endY = toRect.top + toRect.height/2;
+
+    // Curve via a quadratic Bezier: control point is offset perpendicular to the
+    // straight line between start and end, so the rocket arcs instead of flying direct.
     const dx = endX - startX, dy = endY - startY;
-    const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+    const dist = Math.hypot(dx, dy) || 1;
+    const nx = -dy / dist, ny = dx / dist; // unit vector perpendicular to the flight line
+    const curveSide = (fromCardId === 'card-p1') ? -1 : 1; // arc upward when fired left-to-right, and mirror otherwise
+    const bow = Math.min(160, Math.max(60, dist * 0.35)) * curveSide;
+    const midX = (startX + endX) / 2 + nx * bow;
+    const midY = (startY + endY) / 2 + ny * bow;
+
+    function pointAt(t){
+      const mt = 1 - t;
+      return {
+        x: mt*mt*startX + 2*mt*t*midX + t*t*endX,
+        y: mt*mt*startY + 2*mt*t*midY + t*t*endY
+      };
+    }
+    function tangentAngleAt(t){
+      const mt = 1 - t;
+      const tx = 2*mt*(midX - startX) + 2*t*(endX - midX);
+      const ty = 2*mt*(midY - startY) + 2*t*(endY - midY);
+      return Math.atan2(ty, tx) * 180 / Math.PI;
+    }
 
     const rocket = document.createElement('div');
     rocket.className = 'rocket-body';
-    rocket.style.left = startX + 'px';
-    rocket.style.top = startY + 'px';
-    rocket.style.transform = `translate(-50%,-50%) rotate(${angle}deg)`;
-    rocket.style.transition = `left ${durationMs}ms linear, top ${durationMs}ms linear`;
     document.body.appendChild(rocket);
 
-    // Two rAF frames: the first commits the starting position, the second
-    // changes left/top so the CSS transition actually animates between them.
-    requestAnimationFrame(()=>{
-      requestAnimationFrame(()=>{
-        rocket.style.left = endX + 'px';
-        rocket.style.top = endY + 'px';
-      });
-    });
-
-    setTimeout(()=>{
-      rocket.remove();
-      spawnExplosion(endX, endY, '#FFC96B');
-      if(onImpact) onImpact();
-    }, durationMs);
+    const startTime = performance.now();
+    function frame(now){
+      const t = Math.min(1, (now - startTime) / durationMs);
+      const p = pointAt(t);
+      const angle = tangentAngleAt(t);
+      rocket.style.left = p.x + 'px';
+      rocket.style.top = p.y + 'px';
+      rocket.style.transform = `translate(-50%,-50%) rotate(${angle}deg)`;
+      if(t < 1){
+        requestAnimationFrame(frame);
+      } else {
+        rocket.remove();
+        spawnExplosion(endX, endY, '#FFC96B');
+        if(onImpact) onImpact();
+      }
+    }
+    requestAnimationFrame(frame);
   }
 
 
@@ -1102,8 +1123,10 @@
     return JSON.parse(jsonStr);
   }
 
+  const QUESTION_COUNT_BY_DIFFICULTY = { Easy: 5, Medium: 10, Hard: 15 };
+
   async function generateQuestions(cfg){
-    const qCount = 5;
+    const qCount = QUESTION_COUNT_BY_DIFFICULTY[cfg.difficulty] || 5;
     const typeInstruction = cfg.qtype === "mixed"
       ? "Mix multiple_choice and short_answer question types roughly evenly."
       : (cfg.qtype === "mcq" ? "All questions must be type 'multiple_choice'." : "All questions must be type 'short_answer'.");
