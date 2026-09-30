@@ -669,7 +669,7 @@
       g.gain.setValueAtTime(0.0001, t0);
       g.gain.exponentialRampToValueAtTime(o.v || 0.25, t0 + (o.a || 0.006));
       g.gain.exponentialRampToValueAtTime(0.0001, t0 + o.d);
-      osc.connect(g); g.connect(master);
+      osc.connect(g); g.connect(o.dest || master);
       osc.start(t0); osc.stop(t0 + o.d + 0.05);
     }
 
@@ -686,7 +686,7 @@
       g.gain.setValueAtTime(0.0001, t0);
       g.gain.exponentialRampToValueAtTime(o.v || 0.3, t0 + (o.a || 0.01));
       g.gain.exponentialRampToValueAtTime(0.0001, t0 + o.d);
-      src.connect(fl); fl.connect(g); g.connect(master);
+      src.connect(fl); fl.connect(g); g.connect(o.dest || master);
       src.start(t0); src.stop(t0 + o.d + 0.05);
     }
 
@@ -701,7 +701,7 @@
       const t0 = ctx.currentTime;
       const out = ctx.createGain();
       out.gain.setValueAtTime(0.0001, t0);
-      out.gain.exponentialRampToValueAtTime(0.5, t0 + 3);
+      out.gain.exponentialRampToValueAtTime(boss ? 0.12 : 0.5, t0 + 3);
       out.connect(master);
       const nodes = [];
 
@@ -765,10 +765,71 @@
       else if(!muted) ctx.resume();
     });
 
+    /* ---- Boss theme: driving synthesized loop (A minor, 150 BPM), ducks the ambience ---- */
+    let boss = null, bossWanted = false;
+    function duckAmbient(level, sec){
+      if(!ambient) return;
+      const g = ambient.out.gain, t = ctx.currentTime;
+      g.cancelScheduledValues(t);
+      g.setValueAtTime(Math.max(0.0001, g.value), t);
+      g.exponentialRampToValueAtTime(level, t + sec);
+    }
+    function startBossTheme(){
+      bossWanted = true;
+      if(boss || muted || !ensure()) return;
+      const out = ctx.createGain();
+      out.gain.setValueAtTime(0.0001, ctx.currentTime);
+      out.gain.exponentialRampToValueAtTime(0.6, ctx.currentTime + 0.5);
+      out.connect(master);
+      const stepLen = 60 / 150 / 4;          // 16th note
+      const roots = [55, 55, 43.65, 41.2];   // A, A, F, E  (one per bar)
+      const bassPat = [1,1,0,1, 1,0,1,0, 1,1,0,1, 1,0,1,1];
+      const arp = [1, 1.189, 1.498, 1.189];
+      let next = ctx.currentTime + 0.08, i = 0;
+
+      function schedule(n, when){
+        const t = Math.max(0, when - ctx.currentTime);
+        const s16 = n % 16, root = roots[Math.floor(n / 16) % 4];
+        if(bassPat[s16]){
+          const f = (s16 % 8 === 6) ? root * 2 : root;
+          tone({f:f, d:stepLen*1.8, t:t, type:'sawtooth', v:0.28, dest:out});
+        }
+        if(s16 % 4 === 0) tone({f:150, f2:42, d:0.16, t:t, v:0.55, dest:out});                       // kick
+        if(s16 === 4 || s16 === 12) noise({type:'bandpass', f:1800, q:1, d:0.13, t:t, v:0.25, dest:out}); // snare
+        if(s16 % 2 === 0) noise({type:'highpass', f:7000, d:0.04, t:t, v:(s16 % 4 === 2 ? 0.1 : 0.06), dest:out}); // hat
+        if(s16 % 2 === 1) tone({f:root * 8 * arp[(s16 >> 1) % 4], d:0.09, t:t, type:'square', v:0.035, dest:out}); // arp stab
+        if(s16 === 0 && n % 64 === 0) tone({f:root * 4, f2:root * 3.9, d:1.6, t:t, type:'sawtooth', v:0.06, a:0.3, dest:out}); // drone
+      }
+
+      const timer = setInterval(()=>{
+        if(ctx.state !== 'running') return;
+        if(next < ctx.currentTime - 0.3) next = ctx.currentTime + 0.05;   // catch up after a stall
+        while(next < ctx.currentTime + 0.15){ schedule(i, next); next += stepLen; i++; }
+      }, 30);
+      boss = { out, timer };
+      duckAmbient(0.12, 0.6);
+    }
+    function stopBossTheme(keepWanted){
+      if(!keepWanted) bossWanted = false;
+      if(!boss) return;
+      const b = boss; boss = null;
+      clearInterval(b.timer);
+      try{
+        const t = ctx.currentTime;
+        b.out.gain.cancelScheduledValues(t);
+        b.out.gain.setValueAtTime(Math.max(0.0001, b.out.gain.value), t);
+        b.out.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+        setTimeout(()=>{ try{ b.out.disconnect(); }catch(e){} }, 800);
+      }catch(e){}
+      if(!keepWanted) duckAmbient(0.5, 1.5);
+    }
+
     const FX = {
       click(){ tone({f:520, f2:880, d:0.08, v:0.18}); },
       start(){ notes([523,659,784,1047], 'square', 0.12, 0.09, 0.22); noise({type:'highpass', f:3000, d:0.3, v:0.05, t:0.3}); },
       swim(){ noise({type:'bandpass', f:250, f2:900, q:2, d:0.55, v:0.16, a:0.2}); },
+      bossTheme(){ startBossTheme(); },
+      bossEnd(){ stopBossTheme(); },
       boss(){
         tone({f:95, f2:45, d:1.0, type:'sawtooth', v:0.3});
         tone({f:100, f2:48, d:1.0, type:'square', v:0.12});
@@ -811,7 +872,7 @@
     };
 
     function play(name, arg){
-      if(muted) return;
+      if(muted && name !== 'bossEnd') return;
       try{
         if(!ensure()) return;
         if(FX[name]) FX[name](arg);
@@ -822,7 +883,7 @@
       muted = m;
       try{ localStorage.setItem('aquamind-muted', m ? '1' : '0'); }catch(e){}
       if(master) master.gain.value = m ? 0 : 0.7;
-      if(m) stopAmbient(); else if(ctx) startAmbient();
+      if(m){ stopAmbient(); stopBossTheme(true); } else if(ctx){ startAmbient(); if(bossWanted) startBossTheme(); }
       const btn = document.getElementById('sound-toggle');
       if(btn){ btn.textContent = m ? '🔇' : '🔊'; btn.classList.toggle('is-muted', m); }
     }
@@ -1483,7 +1544,7 @@ ${typeInstruction}`;
     resetCardFx('card-p2');
 
     state.p2.hp = enemy.hitsRemaining;
-    if(enemy.type === 'boss') sfx('boss');
+    if(enemy.type === 'boss'){ sfx('boss'); sfx('bossTheme'); }
     state.p2.maxHp = enemy.maxHits;
     state.p2.name = enemy.type === 'boss' ? 'Boss Shark' : 'Minion Fish';
     document.getElementById('hud-p2-name').textContent = enemy.type === 'boss' ? 'BOSS' : 'MINION';
@@ -1510,6 +1571,7 @@ ${typeInstruction}`;
   }
 
   function initBattle(){
+    sfx('bossEnd');
     state.currentIndex = 0;
     state.review = [];
     state.totalScore = 0;
@@ -1578,6 +1640,7 @@ ${typeInstruction}`;
 
     const isDead = state[who].hp <= 0;
     sfx(isDead ? 'death' : (isMonster ? 'monsterHit' : 'playerHit'));
+    if(isDead && isMonster && state.currentEnemy && state.currentEnemy.type === 'boss') sfx('bossEnd');
 
     if(isDead){
       triggerDeath(card, isMonster);
@@ -1838,6 +1901,7 @@ ${typeInstruction}`;
       reviewList.appendChild(row);
     });
 
+    sfx('bossEnd');
     sfx(resultText === 'DRAW' ? 'draw' : (resultText === 'DEFEAT' ? 'defeat' : 'victory'));
     showScreen('screen-summary');
   }
