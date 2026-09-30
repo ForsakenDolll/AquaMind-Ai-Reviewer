@@ -443,6 +443,19 @@
     color: var(--abyss); background: linear-gradient(180deg,#FFE68A,#FFC96B);
     padding:0.3rem 0.6rem; border-radius:6px; box-shadow: 0 0 10px -1px rgba(255,201,107,0.7);
   }
+
+  #sound-toggle{
+    position:fixed; z-index:60;
+    top:calc(env(safe-area-inset-top, 0px) + 10px); right:calc(env(safe-area-inset-right, 0px) + 10px);
+    width:42px; height:42px; border-radius:50%;
+    background: linear-gradient(180deg,#16394E,#0B2333);
+    border:1px solid var(--line); color:var(--foam);
+    font-size:1.1rem; line-height:1; cursor:pointer;
+    box-shadow:0 0 14px -4px rgba(77,232,224,0.5);
+    touch-action:manipulation;
+  }
+  #sound-toggle:active{ transform:scale(0.92); }
+  #sound-toggle.is-muted{ opacity:0.6; border-color:var(--coral); }
 </style>
 </head>
 <body>
@@ -616,11 +629,155 @@
 
 </div>
 
+<button id="sound-toggle" type="button" aria-label="Toggle sound effects" title="Toggle sound">🔊</button>
 <div id="toast" class="toast"></div>
 
 <script>
 (function(){
   "use strict";
+
+  /* ===================== Sound effects (Web Audio, synthesized — no audio files) ===================== */
+  const Sound = (function(){
+    let ctx = null, master = null, noiseBuf = null;
+    let muted = false;
+    try{ muted = localStorage.getItem('aquamind-muted') === '1'; }catch(e){}
+
+    function ensure(){
+      if(!ctx){
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if(!AC) return null;
+        ctx = new AC();
+        master = ctx.createGain();
+        master.gain.value = muted ? 0 : 0.7;
+        const comp = ctx.createDynamicsCompressor();
+        master.connect(comp); comp.connect(ctx.destination);
+        const len = Math.floor(ctx.sampleRate * 2.5);
+        noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
+        const d = noiseBuf.getChannelData(0);
+        for(let i=0;i<len;i++) d[i] = Math.random()*2 - 1;
+      }
+      if(ctx.state === 'suspended') ctx.resume();
+      return ctx;
+    }
+
+    function tone(o){
+      const t0 = ctx.currentTime + (o.t || 0);
+      const osc = ctx.createOscillator(), g = ctx.createGain();
+      osc.type = o.type || 'sine';
+      osc.frequency.setValueAtTime(o.f, t0);
+      if(o.f2) osc.frequency.exponentialRampToValueAtTime(Math.max(1, o.f2), t0 + o.d);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(o.v || 0.25, t0 + (o.a || 0.006));
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + o.d);
+      osc.connect(g); g.connect(master);
+      osc.start(t0); osc.stop(t0 + o.d + 0.05);
+    }
+
+    function noise(o){
+      const t0 = ctx.currentTime + (o.t || 0);
+      const src = ctx.createBufferSource();
+      src.buffer = noiseBuf; src.loop = true;
+      const fl = ctx.createBiquadFilter();
+      fl.type = o.type || 'lowpass';
+      fl.frequency.setValueAtTime(o.f || 1000, t0);
+      if(o.f2) fl.frequency.exponentialRampToValueAtTime(o.f2, t0 + o.d);
+      fl.Q.value = o.q || 1;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(o.v || 0.3, t0 + (o.a || 0.01));
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + o.d);
+      src.connect(fl); fl.connect(g); g.connect(master);
+      src.start(t0); src.stop(t0 + o.d + 0.05);
+    }
+
+    function notes(list, type, v, gap, dur){
+      list.forEach((f,i)=> tone({f:f, t:i*gap, d:dur, type:type, v:v}));
+    }
+
+    const FX = {
+      click(){ tone({f:520, f2:880, d:0.08, v:0.18}); },
+      start(){ notes([523,659,784,1047], 'square', 0.12, 0.09, 0.22); noise({type:'highpass', f:3000, d:0.3, v:0.05, t:0.3}); },
+      swim(){ noise({type:'bandpass', f:250, f2:900, q:2, d:0.55, v:0.16, a:0.2}); },
+      boss(){
+        tone({f:95, f2:45, d:1.0, type:'sawtooth', v:0.3});
+        tone({f:100, f2:48, d:1.0, type:'square', v:0.12});
+        noise({type:'lowpass', f:500, f2:90, d:1.0, v:0.25});
+      },
+      buzz(){ tone({f:660, d:0.12, type:'square', v:0.18}); tone({f:990, t:0.1, d:0.2, type:'square', v:0.18}); },
+      correct(){ notes([659,880,1319], 'triangle', 0.25, 0.08, 0.22); },
+      wrong(){ tone({f:220, f2:110, d:0.35, type:'sawtooth', v:0.2}); tone({f:185, f2:92, t:0.14, d:0.4, type:'sawtooth', v:0.2}); },
+      rocket(ms){
+        const d = Math.max(0.4, (ms || 1500) / 1000);
+        tone({f:220, f2:55, d:0.18, v:0.35});
+        noise({type:'bandpass', f:400, f2:2400, q:1.5, d:d, v:0.22, a:d*0.4});
+        tone({f:110, f2:420, d:d, type:'sawtooth', v:0.06, a:d*0.4});
+      },
+      explosion(){
+        noise({type:'lowpass', f:3200, f2:180, d:0.75, v:0.6, a:0.004});
+        tone({f:130, f2:28, d:0.65, v:0.5});
+        noise({type:'highpass', f:2500, d:0.25, v:0.18});
+      },
+      playerHit(){ noise({type:'bandpass', f:900, f2:200, q:1, d:0.28, v:0.4}); tone({f:190, f2:60, d:0.28, type:'square', v:0.18}); },
+      monsterHit(){ tone({f:520, f2:200, d:0.2, type:'triangle', v:0.3}); noise({type:'bandpass', f:1500, q:2, d:0.1, v:0.2}); },
+      death(){
+        tone({f:420, f2:40, d:1.1, type:'sawtooth', v:0.25});
+        noise({type:'lowpass', f:1400, f2:100, d:1.1, v:0.3});
+        for(let i=0;i<5;i++) tone({f:500+Math.random()*700, f2:1200+Math.random()*600, t:0.15+i*0.11, d:0.07, v:0.1});
+      },
+      lunge(){
+        noise({type:'bandpass', f:200, f2:1300, q:1.5, d:0.35, v:0.25, a:0.15});
+        tone({f:150, f2:320, d:0.3, type:'sawtooth', v:0.1});
+        noise({type:'highpass', f:1800, t:0.28, d:0.1, v:0.2});
+      },
+      lowhp(){ tone({f:880, d:0.1, type:'square', v:0.1}); tone({f:880, t:0.2, d:0.1, type:'square', v:0.1}); },
+      error(){ tone({f:200, d:0.14, type:'square', v:0.13}); tone({f:160, t:0.16, d:0.18, type:'square', v:0.13}); },
+      victory(){
+        notes([523,659,784,1047], 'square', 0.16, 0.13, 0.3);
+        [523,659,784,1047].forEach(f=>tone({f:f, t:0.55, d:1.1, type:'triangle', v:0.14}));
+      },
+      defeat(){ notes([392,330,262,196], 'triangle', 0.26, 0.3, 0.5); },
+      draw(){ notes([440,440,392], 'triangle', 0.22, 0.22, 0.35); }
+    };
+
+    function play(name, arg){
+      if(muted) return;
+      try{
+        if(!ensure()) return;
+        if(FX[name]) FX[name](arg);
+      }catch(e){ /* audio is non-essential */ }
+    }
+
+    function setMuted(m){
+      muted = m;
+      try{ localStorage.setItem('aquamind-muted', m ? '1' : '0'); }catch(e){}
+      if(master) master.gain.value = m ? 0 : 0.7;
+      const btn = document.getElementById('sound-toggle');
+      if(btn){ btn.textContent = m ? '🔇' : '🔊'; btn.classList.toggle('is-muted', m); }
+    }
+
+    // Browsers only allow audio after a user gesture — unlock on first interaction.
+    ['pointerdown','keydown','touchend'].forEach(evt=>{
+      window.addEventListener(evt, ()=>{ if(!muted) ensure(); }, {passive:true});
+    });
+
+    // Soft click on buttons / mode options (buzzers have their own sound).
+    document.addEventListener('pointerdown', e=>{
+      const el = e.target.closest && e.target.closest('button, .mode-option');
+      if(!el || el.id === 'sound-toggle' || el.classList.contains('buzz-btn') || el.disabled) return;
+      play('click');
+    });
+
+    const toggleBtn = document.getElementById('sound-toggle');
+    toggleBtn.addEventListener('click', ()=>{
+      const willMute = !muted;
+      if(!willMute){ muted = false; setMuted(false); ensure(); play('click'); }
+      else setMuted(true);
+    });
+    setMuted(muted);
+
+    return { play };
+  })();
+  function sfx(name, arg){ Sound.play(name, arg); }
 
   /* ===================== Canvas caustics (animated background light) ===================== */
   const causticsCanvas = document.getElementById('caustics-canvas');
@@ -794,6 +951,7 @@
   }
 
   function spawnExplosion(x, y, color){
+    sfx('explosion');
     const flash = document.createElement('div');
     flash.className = 'explosion-flash';
     flash.style.left = x + 'px';
@@ -860,6 +1018,7 @@
 
     const rocket = document.createElement('div');
     rocket.className = 'rocket-body';
+    sfx('rocket', durationMs);
     document.body.appendChild(rocket);
 
     const startTime = performance.now();
@@ -898,6 +1057,7 @@
   }
 
   function triggerLunge(cardEl){
+    sfx('lunge');
     const hadFloat = pauseFloat(cardEl);
     cardEl.classList.add('lunge');
     setTimeout(()=>{
@@ -907,6 +1067,7 @@
   }
 
   function playEntrance(cardEl, fromSide){
+    sfx('swim');
     const hadFloat = pauseFloat(cardEl);
     const cls = fromSide === 'left' ? 'swim-in-left' : 'swim-in-right';
     cardEl.classList.add(cls);
@@ -981,6 +1142,7 @@
 
     initBattle();
     showScreen('screen-battle');
+    sfx('start');
     startBtn.disabled = false;
     startBtn.textContent = "⚡ START GAME";
   });
@@ -1101,6 +1263,7 @@
   }
 
   function showErrorBox(id, info){
+    sfx('error');
     document.getElementById(id + '-title').textContent = info.title;
     document.getElementById(id + '-detail').textContent = info.detail;
     document.getElementById(id + '-hint').textContent = info.hint;
@@ -1248,6 +1411,7 @@ ${typeInstruction}`;
     resetCardFx('card-p2');
 
     state.p2.hp = enemy.hitsRemaining;
+    if(enemy.type === 'boss') sfx('boss');
     state.p2.maxHp = enemy.maxHits;
     state.p2.name = enemy.type === 'boss' ? 'Boss Shark' : 'Minion Fish';
     document.getElementById('hud-p2-name').textContent = enemy.type === 'boss' ? 'BOSS' : 'MINION';
@@ -1321,7 +1485,10 @@ ${typeInstruction}`;
     const text = document.getElementById('hud-'+who+'-hp-text');
     fill.style.width = pct + '%';
     text.textContent = Math.max(0,p.hp) + '/' + p.maxHp;
-    fill.classList.toggle('low-hp', pct > 0 && pct <= 30);
+    const wasLow = fill.classList.contains('low-hp');
+    const nowLow = pct > 0 && pct <= 30;
+    fill.classList.toggle('low-hp', nowLow);
+    if(nowLow && !wasLow) sfx('lowhp');
   }
 
   function dealDamage(who, amount){
@@ -1338,6 +1505,7 @@ ${typeInstruction}`;
     updateHpBar(who);
 
     const isDead = state[who].hp <= 0;
+    sfx(isDead ? 'death' : (isMonster ? 'monsterHit' : 'playerHit'));
 
     if(isDead){
       triggerDeath(card, isMonster);
@@ -1415,6 +1583,7 @@ ${typeInstruction}`;
   function lockBuzzer(who, cb){
     if(state.activePvpPlayer) return;
     state.activePvpPlayer = who;
+    sfx('buzz');
     document.getElementById('buzz-p1').disabled = true;
     document.getElementById('buzz-p2').disabled = true;
     document.getElementById('buzz-'+who).classList.remove('locked');
@@ -1459,7 +1628,7 @@ ${typeInstruction}`;
     const q = currentQuestion();
     const input = document.getElementById('short-answer-input');
     const answer = input.value.trim();
-    if(!answer){ toast("Type an answer first!", 1400); return; }
+    if(!answer){ sfx('error'); toast("Type an answer first!", 1400); return; }
     const btn = document.getElementById('submit-short');
     btn.disabled = true;
     btn.textContent = "Grading…";
@@ -1491,6 +1660,7 @@ ${typeInstruction}`;
   });
 
   function logAndResolve(entry, isCorrect){
+    sfx(isCorrect ? 'correct' : 'wrong');
     state.review.push(entry);
     state.totalScore += entry.earned;
     state.totalMax += entry.max;
@@ -1596,6 +1766,7 @@ ${typeInstruction}`;
       reviewList.appendChild(row);
     });
 
+    sfx(resultText === 'DRAW' ? 'draw' : (resultText === 'DEFEAT' ? 'defeat' : 'victory'));
     showScreen('screen-summary');
   }
 
