@@ -831,9 +831,35 @@
       bossTheme(){ startBossTheme(); },
       bossEnd(){ stopBossTheme(); },
       boss(){
-        tone({f:95, f2:45, d:1.0, type:'sawtooth', v:0.3});
-        tone({f:100, f2:48, d:1.0, type:'square', v:0.12});
-        noise({type:'lowpass', f:500, f2:90, d:1.0, v:0.25});
+        // Shark growl: low saw through a sweeping formant filter, chopped by fast tremolo (the "rumble")
+        const t0 = ctx.currentTime, d = 1.5;
+        const osc = ctx.createOscillator(); osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(88, t0);
+        osc.frequency.linearRampToValueAtTime(62, t0 + d*0.5);
+        osc.frequency.exponentialRampToValueAtTime(36, t0 + d);
+        const fl = ctx.createBiquadFilter(); fl.type = 'bandpass'; fl.Q.value = 4;
+        fl.frequency.setValueAtTime(300, t0);
+        fl.frequency.exponentialRampToValueAtTime(720, t0 + d*0.4);
+        fl.frequency.exponentialRampToValueAtTime(170, t0 + d);
+        const trem = ctx.createGain(); trem.gain.value = 0.5;
+        const am = ctx.createOscillator(); am.frequency.value = 27;
+        const amG = ctx.createGain(); amG.gain.value = 0.5;
+        am.connect(amG); amG.connect(trem.gain);
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(1.0, t0 + 0.18);
+        g.gain.setValueAtTime(1.0, t0 + d*0.55);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + d);
+        osc.connect(fl); fl.connect(trem); trem.connect(g); g.connect(master);
+        osc.start(t0); am.start(t0); osc.stop(t0 + d + 0.05); am.stop(t0 + d + 0.05);
+        noise({type:'bandpass', f:950, f2:300, q:2, d:1.3, v:0.22, a:0.12});   // raspy breath
+        tone({f:62, f2:34, d:1.0, v:0.4});                                      // chest thump
+      },
+      minion(){
+        // Small squeaky "blub-blip"
+        tone({f:700, f2:1150, d:0.09, v:0.2});
+        tone({f:950, f2:1600, t:0.1, d:0.08, v:0.16});
+        noise({type:'bandpass', f:2200, q:3, t:0.02, d:0.06, v:0.06});
       },
       buzz(){ tone({f:660, d:0.12, type:'square', v:0.18}); tone({f:990, t:0.1, d:0.2, type:'square', v:0.18}); },
       correct(){ notes([659,880,1319], 'triangle', 0.25, 0.08, 0.22); },
@@ -1544,7 +1570,7 @@ ${typeInstruction}`;
     resetCardFx('card-p2');
 
     state.p2.hp = enemy.hitsRemaining;
-    if(enemy.type === 'boss'){ sfx('boss'); sfx('bossTheme'); }
+    if(enemy.type === 'boss'){ sfx('boss'); sfx('bossTheme'); } else { sfx('minion'); }
     state.p2.maxHp = enemy.maxHits;
     state.p2.name = enemy.type === 'boss' ? 'Boss Shark' : 'Minion Fish';
     document.getElementById('hud-p2-name').textContent = enemy.type === 'boss' ? 'BOSS' : 'MINION';
