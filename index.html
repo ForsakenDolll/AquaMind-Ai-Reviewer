@@ -921,6 +921,7 @@
         tone({f:150, f2:320, d:0.3, type:'sawtooth', v:0.1});
         noise({type:'highpass', f:1800, t:0.28, d:0.1, v:0.2});
       },
+      bonus(){ notes([392,523,659,784,1047], 'square', 0.14, 0.08, 0.2); noise({type:'highpass', f:3000, d:0.25, v:0.06, t:0.4}); },
       lowhp(){ tone({f:880, d:0.1, type:'square', v:0.1}); tone({f:880, t:0.2, d:0.1, type:'square', v:0.1}); },
       error(){ tone({f:200, d:0.14, type:'square', v:0.13}); tone({f:160, t:0.16, d:0.18, type:'square', v:0.13}); },
       victory(){
@@ -1512,7 +1513,9 @@
     totalScore: 0,
     totalMax: 0,
     currentEnemy: null,   // { type:'minion'|'boss', hitsRemaining, maxHits } — PvE only
-    bossSpawned: false
+    bossSpawned: false,
+    bonusRounds: 0,       // how many bonus batches have been loaded
+    baseCount: 0          // number of questions in the original set
   };
 
   const DAMAGE_MIN = 18, DAMAGE_MAX = 30;
@@ -1705,8 +1708,10 @@
 
   const QUESTION_COUNT_BY_DIFFICULTY = { Easy: 5, Medium: 10, Hard: 15 };
 
-  async function generateQuestions(cfg){
-    const qCount = QUESTION_COUNT_BY_DIFFICULTY[cfg.difficulty] || 5;
+  async function generateQuestions(cfg, opts){
+    opts = opts || {};
+    const qCount = opts.count || QUESTION_COUNT_BY_DIFFICULTY[cfg.difficulty] || 5;
+    const avoidText = (opts.avoid && opts.avoid.length) ? '\nDo not repeat or rephrase any of these existing questions:\n- ' + opts.avoid.join('\n- ') : '';
     const typeInstruction = cfg.qtype === "mixed"
       ? "Mix multiple_choice and short_answer question types roughly evenly."
       : (cfg.qtype === "mcq" ? "All questions must be type 'multiple_choice'." : "All questions must be type 'short_answer'.");
@@ -1720,7 +1725,7 @@
 
 ${typeInstruction}`;
 
-    const userPrompt = `Topic: ${cfg.topic}\nDifficulty: ${cfg.difficulty}\nGenerate the questions now as raw JSON only.`;
+    const userPrompt = `Topic: ${cfg.topic}\nDifficulty: ${cfg.difficulty}${avoidText}\nGenerate the questions now as raw JSON only.`;
 
     const content = await callAI([
       { role: "system", content: systemPrompt },
@@ -1815,7 +1820,7 @@ ${typeInstruction}`;
   /* ----- PvE enemy wave logic: disposable minions (1-hit kill) + a tougher boss ----- */
   function decideNextEnemy(){
     const remaining = state.questions.length - state.currentIndex; // includes current question
-    if(!state.bossSpawned && remaining <= 2 && state.questions.length >= 2){
+    if(!state.bossSpawned && ((remaining <= 2 && state.questions.length >= 2) || state.bonusRounds > 0)){
       state.bossSpawned = true;
       return { type: 'boss', hitsRemaining: 2, maxHits: 2 };
     }
@@ -1863,6 +1868,8 @@ ${typeInstruction}`;
     state.p1 = { name: "You", hp: 100, maxHp: 100 };
     state.currentEnemy = null;
     state.bossSpawned = false;
+    state.bonusRounds = 0;
+    state.baseCount = state.questions.length;
 
     // A previous match's death animation leaves a card faded out, sunk, and
     // rotated (opacity 0, via animation-fill-mode: forwards). Without this,
@@ -1962,8 +1969,9 @@ ${typeInstruction}`;
 
     ensureEnemy();
 
-    document.getElementById('q-counter').textContent = `Question ${state.currentIndex+1}/${state.questions.length}`;
-    document.getElementById('q-type-tag').textContent = q.type === 'mcq' ? 'MCQ' : 'SHORT ANSWER';
+    const isBonus = state.bonusRounds > 0 && state.currentIndex >= state.baseCount;
+    document.getElementById('q-counter').textContent = isBonus ? `⚡ Bonus Question ${state.currentIndex - state.baseCount + 1}` : `Question ${state.currentIndex+1}/${state.questions.length}`;
+    document.getElementById('q-type-tag').textContent = (isBonus ? 'BONUS · ' : '') + (q.type === 'mcq' ? 'MCQ' : 'SHORT ANSWER');
     document.getElementById('q-text').textContent = q.question;
 
     const mcqBox = document.getElementById('mcq-choices');
@@ -2124,14 +2132,47 @@ ${typeInstruction}`;
   function nextStep(){
     const battleOver = state.mode === 'pvp'
       ? (state.p1.hp <= 0 || state.p2.hp <= 0)
-      : (state.p1.hp <= 0);
+      : (state.p1.hp <= 0 || bossDefeated());
     if(battleOver){
       return endBattle();
     }
     state.currentIndex++;
     if(state.currentIndex >= state.questions.length){
+      if(state.mode === 'pve' && state.p1.hp > 0 && !bossDefeated()) return loadBonusQuestions();
       return endBattle();
     }
+    renderQuestion();
+  }
+
+  /* Bonus round: the questions ran out but the boss is still alive, so fetch more
+     until the boss is defeated (or the player goes down). */
+  function bossDefeated(){
+    return !!(state.bossSpawned && state.currentEnemy && state.currentEnemy.type === 'boss' && state.currentEnemy.hitsRemaining <= 0);
+  }
+
+  async function loadBonusQuestions(){
+    sfx('bonus');
+    toast(state.bossSpawned ? "⚡ BONUS ROUND — finish the boss!" : "⚡ BONUS ROUND — the boss is coming!", 2200);
+    document.getElementById('q-counter').textContent = '⚡ Bonus round';
+    document.getElementById('q-text').textContent = "The boss is still alive… summoning bonus questions!";
+    document.getElementById('mcq-choices').innerHTML = '';
+    document.getElementById('short-answer-box').classList.add('hidden');
+    document.getElementById('buzzer-row').classList.add('hidden');
+
+    let list = null;
+    for(let attempt = 0; attempt < 2 && !list; attempt++){
+      try{
+        list = await generateQuestions(state.config, { count: 3, avoid: state.questions.map(q=>q.question) });
+      }catch(err){
+        console.error("Bonus question generation failed (attempt " + (attempt+1) + "):", err);
+      }
+    }
+    if(!list){
+      toast("Couldn't summon bonus questions — the boss escaped!", 2200);
+      return endBattle();
+    }
+    state.questions.push(...list);
+    state.bonusRounds++;
     renderQuestion();
   }
 
@@ -2153,7 +2194,7 @@ ${typeInstruction}`;
         const bossCleared = state.bossSpawned && state.currentEnemy && state.currentEnemy.type === 'boss' && state.currentEnemy.hitsRemaining <= 0;
         const bossEscaped = state.bossSpawned && !bossCleared;
         resultSub = bossCleared
-          ? "You cleared every minion and took down the boss shark!"
+          ? (state.bonusRounds > 0 ? "The boss survived the quiz, but you finished it off in the bonus round!" : "You cleared every minion and took down the boss shark!")
           : bossEscaped
             ? "You survived the gauntlet, but the boss shark got away."
             : "You cleared every creature in your path!";
