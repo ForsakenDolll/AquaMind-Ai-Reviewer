@@ -1245,9 +1245,7 @@ ${typeInstruction}`;
   function spawnEnemyVisual(enemy){
     // The previous enemy's death animation leaves this card faded out (opacity 0, sunk and
     // rotated). Reset every leftover animation class so the new enemy is actually visible.
-    const enemyCard = document.getElementById('card-p2');
-    enemyCard.classList.remove('sprite-death','recoil-hit','lunge','animate-hit','flash-red','swim-in-left','swim-in-right');
-    void enemyCard.offsetWidth; // force a reflow so the entrance animation restarts cleanly
+    resetCardFx('card-p2');
 
     state.p2.hp = enemy.hitsRemaining;
     state.p2.maxHp = enemy.maxHits;
@@ -1269,6 +1267,12 @@ ${typeInstruction}`;
   }
 
   /* ===================== Battle setup ===================== */
+  function resetCardFx(cardId){
+    const card = document.getElementById(cardId);
+    card.classList.remove('sprite-death','recoil-hit','lunge','animate-hit','flash-red','swim-in-left','swim-in-right');
+    void card.offsetWidth; // force a reflow so entrance/idle animations restart cleanly
+  }
+
   function initBattle(){
     state.currentIndex = 0;
     state.review = [];
@@ -1277,6 +1281,13 @@ ${typeInstruction}`;
     state.p1 = { name: "You", hp: 100, maxHp: 100 };
     state.currentEnemy = null;
     state.bossSpawned = false;
+
+    // A previous match's death animation leaves a card faded out, sunk, and
+    // rotated (opacity 0, via animation-fill-mode: forwards). Without this,
+    // a fresh game could visually start with the player already "dead" if
+    // they lost the last match.
+    resetCardFx('card-p1');
+    resetCardFx('card-p2');
 
     if(state.mode === "pvp"){
       state.p2 = { name: "Player 2", hp: 100, maxHp: 100 };
