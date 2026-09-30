@@ -475,6 +475,19 @@
   .fish-tail{ transform-origin:11px 12px; animation: tailWag .4s ease-in-out infinite alternate; }
   @keyframes tailWag{ from{ transform:rotate(-16deg); } to{ transform:rotate(16deg); } }
   @media (prefers-reduced-motion: reduce){ .sway,.sway-s,.twinkle,.fish-mover,.fish-bob,.fish-tail{ animation:none; } }
+
+  /* ---------- Glowing jellyfish ---------- */
+  .jelly-mover{ position:absolute; top:0; left:var(--jx); mix-blend-mode:screen; will-change:transform; animation: jellyRise var(--dur,60s) linear infinite; animation-delay:var(--dl,0s); }
+  @keyframes jellyRise{ from{ transform:translateY(var(--y0)); } to{ transform:translateY(var(--y1)); } }
+  .jelly-drift{ animation: jellyDrift var(--dd,7s) ease-in-out infinite alternate; filter: drop-shadow(0 0 6px var(--jc)) drop-shadow(0 0 16px var(--jc)); }
+  @keyframes jellyDrift{ from{ transform:translateX(-22px) rotate(-4deg); } to{ transform:translateX(22px) rotate(4deg); } }
+  .jelly-glow{ animation: jellyGlow 3.2s ease-in-out infinite alternate; }
+  @keyframes jellyGlow{ from{ opacity:.55; } to{ opacity:1; } }
+  .jelly-bell{ transform-origin:30px 34px; animation: jellyPulse 2.4s ease-in-out infinite; }
+  @keyframes jellyPulse{ 0%,100%{ transform:scale(1,1); } 45%{ transform:scale(1.08,.88); } }
+  .jelly-tent{ transform-origin:30px 34px; animation: jellySway 2.4s ease-in-out infinite; }
+  @keyframes jellySway{ 0%,100%{ transform:skewX(-4deg) scaleY(1); } 45%{ transform:skewX(4deg) scaleY(1.08); } }
+  @media (prefers-reduced-motion: reduce){ .jelly-mover,.jelly-drift,.jelly-glow,.jelly-bell,.jelly-tent{ animation:none; } }
 </style>
 </head>
 <body>
@@ -1206,6 +1219,40 @@
       }
       mv.innerHTML = `<div style="position:relative;transform:scaleX(${o.dir})">${inner}</div>`;
       fl.appendChild(mv);
+    });
+
+    /* --- glowing jellyfish: slowly rise, drift side to side, pulse their bells --- */
+    function jellySVG(id, c, w){
+      let tents = '';
+      [10,17,24,30,36,43,50].forEach(x=>{ tents += `<path d="M${x} 36q-4 13 0 25t0 25" stroke="${c}" stroke-width="1.6" stroke-linecap="round" fill="none" opacity=".7"/>`; });
+      [22,30,38].forEach(x=>{ tents += `<path d="M${x} 38q-6 12 0 22t-2 22" stroke="#fff" stroke-width="3" stroke-linecap="round" fill="none" opacity=".35"/>`; });
+      let spots = '';
+      [[20,20],[30,14],[40,20],[25,27],[36,27]].forEach((q,i)=>{ spots += `<circle class="jelly-glow" style="animation-delay:-${i*.6}s" cx="${q[0]}" cy="${q[1]}" r="1.7" fill="#fff"/>`; });
+      return `<svg width="${w}" height="${w*1.5}" viewBox="0 0 60 90" style="overflow:visible"><defs>
+        <radialGradient id="jg${id}" cx=".5" cy=".35" r=".7"><stop offset="0" stop-color="#fff" stop-opacity=".9"/><stop offset=".45" stop-color="${c}" stop-opacity=".65"/><stop offset="1" stop-color="${c}" stop-opacity=".15"/></radialGradient>
+        <radialGradient id="jh${id}"><stop offset="0" stop-color="${c}" stop-opacity=".5"/><stop offset="1" stop-color="${c}" stop-opacity="0"/></radialGradient></defs>
+        <circle class="jelly-glow" cx="30" cy="30" r="40" fill="url(#jh${id})"/>
+        <g class="jelly-tent">${tents}</g>
+        <g class="jelly-bell"><path d="M6 34C6 6 54 6 54 34Q47 41 41 35Q35 42 30 36Q25 42 19 35Q13 41 6 34Z" fill="url(#jg${id})"/><ellipse cx="24" cy="18" rx="9" ry="4" fill="#fff" opacity=".3"/><path d="M6 34Q13 41 19 35Q25 42 30 36Q35 42 41 35Q47 41 54 34" stroke="#fff" stroke-width="1.2" fill="none" opacity=".55"/>${spots}</g></svg>`;
+    }
+    [
+      {w:46,x:.12,dur:62,dl:14,c:'#6CFBF3',dd:7,op:.95},
+      {w:70,x:.78,dur:80,dl:45,c:'#B59CFF',dd:9,op:.95},
+      {w:36,x:.42,dur:54,dl:30,c:'#FF8FD8',dd:6,op:.9},
+      {w:56,x:.6,dur:70,dl:5,c:'#7AB8FF',dd:8,op:.9},
+      {w:30,x:.27,dur:48,dl:22,c:'#9BFFB8',dd:6,op:.55,blur:.8}
+    ].forEach((o,i)=>{
+      const jm = document.createElement('div');
+      jm.className = 'jelly-mover';
+      jm.style.setProperty('--jx', (o.x*W) + 'px');
+      jm.style.setProperty('--y0', (window.innerHeight + 40) + 'px');
+      jm.style.setProperty('--y1', (-o.w*1.5 - 60) + 'px');
+      jm.style.setProperty('--dur', o.dur + 's');
+      jm.style.setProperty('--dl', '-' + o.dl + 's');
+      jm.style.opacity = o.op;
+      if(o.blur) jm.style.filter = 'blur(' + o.blur + 'px)';
+      jm.innerHTML = `<div class="jelly-drift" style="--jc:${o.c};--dd:${o.dd}s">${jellySVG(i, o.c, o.w)}</div>`;
+      fl.appendChild(jm);
     });
   }
   buildScenery();
