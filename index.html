@@ -1507,6 +1507,8 @@
       const el = document.createElement('div');
       el.className = 'spike-body';
       el.style.opacity = '0';
+      const spikeHue = (state.currentEnemy && state.currentEnemy.hue) || 0;
+      el.style.filter = 'hue-rotate(' + spikeHue + 'deg) drop-shadow(0 0 4px rgba(255,190,90,0.95))';
       document.body.appendChild(el);
       spikes.push({ el, P0, P1, P2, P3, delay: (i/(N-1))*stagger, done:false });
     }
@@ -1893,12 +1895,13 @@ ${typeInstruction}`;
     spriteTimers[elId] = setInterval(setFrame, cycleMs / frameCount);
   }
 
-  function setSprite(elId, kind, variant){
+  function setSprite(elId, kind, variant, hue){
     const el = document.getElementById(elId);
     const baseClasses = elId === 'p1-sprite'
       ? 'mx-auto w-32 h-32 sm:w-44 sm:h-44 sprite-glow'
       : 'mx-auto w-36 h-36 sm:w-48 sm:h-48 sprite-glow';
     const flip = elId === 'p2-sprite' ? -1 : 1;
+    el.style.filter = '';   // clear any minion colour left over from the previous enemy
 
     if(kind === 'diver'){
       el.className = [baseClasses, 'sprite-frameflip', 'diver-sprite'].filter(Boolean).join(' ');
@@ -1909,6 +1912,7 @@ ${typeInstruction}`;
       el.className = [baseClasses, 'sprite-frameflip', 'minion-sprite'].filter(Boolean).join(' ');
       el.style.backgroundImage = 'url(' + MINION_SHEET + ')';
       el.style.transform = 'scale(0.7, 0.7)';
+      el.style.filter = 'hue-rotate(' + (hue || 0) + 'deg) drop-shadow(0 6px 14px rgba(0,0,0,0.45))';
       startFrameLoop(elId, 22, 4400);
     } else {
       const variantClass = variant === 'boss' ? 'enemy-boss' : '';
@@ -1921,13 +1925,24 @@ ${typeInstruction}`;
   }
 
   /* ----- PvE enemy wave logic: disposable minions (1-hit kill) + a tougher boss ----- */
+  /* Each minion gets its own colour: the orange pufferfish art is hue-rotated by a random
+     amount from this list (0 = original orange). Never repeats the previous minion's colour. */
+  const MINION_HUES = [0, 55, 120, 170, 210, 260, 310, 340];
+  let lastMinionHue = -1;
+  function pickMinionHue(){
+    let h;
+    do { h = MINION_HUES[Math.floor(Math.random() * MINION_HUES.length)]; } while(h === lastMinionHue);
+    lastMinionHue = h;
+    return h;
+  }
+
   function decideNextEnemy(){
     const remaining = state.questions.length - state.currentIndex; // includes current question
     if(!state.bossSpawned && ((remaining <= 2 && state.questions.length >= 2) || state.bonusRounds > 0)){
       state.bossSpawned = true;
       return { type: 'boss', hitsRemaining: 2, maxHits: 2 };
     }
-    return { type: 'minion', hitsRemaining: 1, maxHits: 1 };
+    return { type: 'minion', hitsRemaining: 1, maxHits: 1, hue: pickMinionHue() };
   }
 
   function spawnEnemyVisual(enemy){
@@ -1941,7 +1956,7 @@ ${typeInstruction}`;
     state.p2.name = enemy.type === 'boss' ? 'Boss Shark' : 'Minion Fish';
     document.getElementById('hud-p2-name').textContent = enemy.type === 'boss' ? 'BOSS' : 'MINION';
     document.getElementById('p2-label').textContent = enemy.type === 'boss' ? 'Boss Shark' : 'Minion';
-    setSprite('p2-sprite', 'shark', enemy.type);
+    setSprite('p2-sprite', 'shark', enemy.type, enemy.hue);
     document.getElementById('card-p2').classList.add('animate-float');
     updateHpBar('p2');
     playEntrance(document.getElementById('card-p2'), 'right');
