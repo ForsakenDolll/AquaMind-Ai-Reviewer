@@ -441,6 +441,23 @@
     100%{ transform: translate(calc(-50% + var(--tx)), calc(-50% + var(--ty))) scale(0.15); opacity:0; }
   }
 
+  /* ---------- Question timer ---------- */
+  .timer-fill{
+    height:100%; width:100%; border-radius:999px;
+    background: linear-gradient(90deg, var(--cyan-dim), var(--cyan));
+    box-shadow: 0 0 8px rgba(77,232,224,0.7);
+    transition: width .1s linear;
+  }
+  .timer-text{
+    display:inline-block; font-family:'Orbitron', sans-serif; font-weight:900; font-size:1.05rem;
+    color: var(--cyan); min-width:2ch; text-align:right;
+  }
+  #timer-wrap.t-warn .timer-fill{ background: linear-gradient(90deg,#C9971C,var(--gold)); box-shadow:0 0 8px rgba(255,201,107,0.7); }
+  #timer-wrap.t-warn .timer-text{ color: var(--gold); }
+  #timer-wrap.t-danger .timer-fill{ background: linear-gradient(90deg,#E43B3B,#FF8F8F); box-shadow:0 0 10px rgba(255,80,80,0.8); animation: lowHpPulse .5s ease-in-out infinite; }
+  #timer-wrap.t-danger .timer-text{ color: var(--coral); animation: timerBeat 1s ease-in-out infinite; }
+  @keyframes timerBeat{ 0%,100%{ transform: scale(1); } 50%{ transform: scale(1.3); } }
+
   .screen{ display:none; }
   .screen.active{ display:block; }
 
@@ -628,6 +645,13 @@
     <!-- Question card floats as an overlay directly on the scene -->
     <div class="question-overlay">
       <div class="panel question-panel p-4 sm:p-5">
+        <div id="timer-wrap" class="mb-3">
+          <div class="flex items-center justify-between mb-1">
+            <span class="font-arcade" style="font-size:0.5rem; color:var(--foam-dim);">⏱ TIME LEFT</span>
+            <span id="timer-text" class="timer-text">15</span>
+          </div>
+          <div class="hp-track" style="height:10px;"><div id="timer-fill" class="timer-fill"></div></div>
+        </div>
         <div class="flex items-center justify-between mb-2">
           <span id="q-counter" class="text-xs font-mono" style="color:var(--foam-dim)">Question 1/5</span>
           <span id="q-type-tag" class="qtag">MCQ</span>
@@ -963,6 +987,24 @@
       },
       bonus(){ notes([392,523,659,784,1047], 'square', 0.14, 0.08, 0.2); noise({type:'highpass', f:3000, d:0.25, v:0.06, t:0.4}); },
       lowhp(){ tone({f:880, d:0.1, type:'square', v:0.1}); tone({f:880, t:0.2, d:0.1, type:'square', v:0.1}); },
+      // Clock "tick / tock": alternates pitch each second
+      tick(n){
+        const hi = (n % 2 === 0);
+        tone({f: hi ? 1500 : 1100, f2: hi ? 900 : 650, d:0.04, type:'square', v:0.08, a:0.002});
+        noise({type:'highpass', f:4000, d:0.025, v:0.05, a:0.001});
+      },
+      // Last 5 seconds: sharper, louder, with a low thump underneath
+      tickUrgent(n){
+        const hi = (n % 2 === 0);
+        tone({f: hi ? 2200 : 1700, f2: hi ? 1400 : 1000, d:0.06, type:'square', v:0.14, a:0.002});
+        tone({f:130, f2:70, d:0.12, type:'sine', v:0.28, a:0.003});
+        noise({type:'highpass', f:4500, d:0.03, v:0.08, a:0.001});
+      },
+      timeUp(){
+        tone({f:880, f2:420, d:0.55, type:'sawtooth', v:0.22});
+        tone({f:660, f2:310, t:0.14, d:0.55, type:'sawtooth', v:0.2});
+        noise({type:'bandpass', f:900, f2:200, q:1, t:0.05, d:0.4, v:0.25});
+      },
       error(){ tone({f:200, d:0.14, type:'square', v:0.13}); tone({f:160, t:0.16, d:0.18, type:'square', v:0.13}); },
       victory(){
         notes([523,659,784,1047], 'square', 0.16, 0.13, 0.3);
@@ -1643,7 +1685,8 @@
     bossSpawned: false,
     bonusRounds: 0,       // how many bonus batches have been loaded
     octopusSpawned: false, // bonus boss (Kraken octopus) appears after the shark boss is beaten
-    baseCount: 0          // number of questions in the original set
+    baseCount: 0,         // number of questions in the original set
+    resolving: false      // true once the current question has been answered / timed out
   };
 
   const DAMAGE_MIN = 18, DAMAGE_MAX = 30;
@@ -2119,12 +2162,124 @@ ${typeInstruction}`;
     cardEl.classList.add('sprite-death');
   }
 
+  /* ===================== Question timer (15s, ticking; monster attacks on timeout) ===================== */
+  const QUESTION_TIME_MS = 15000;
+  const timer = { id:null, deadline:0, remaining:QUESTION_TIME_MS, lastSec:null, ticks:0, pausedByTab:false };
+
+  function renderTimer(ms){
+    const sec = Math.max(0, Math.ceil(ms / 1000));
+    document.getElementById('timer-text').textContent = sec;
+    document.getElementById('timer-fill').style.width = (Math.max(0, ms) / QUESTION_TIME_MS * 100) + '%';
+    const wrap = document.getElementById('timer-wrap');
+    wrap.classList.toggle('t-warn', sec <= 8 && sec > 5);
+    wrap.classList.toggle('t-danger', sec <= 5);
+  }
+
+  function timerLoop(){
+    const ms = timer.deadline - performance.now();
+    renderTimer(ms);
+    const sec = Math.ceil(ms / 1000);
+    if(sec !== timer.lastSec){
+      timer.lastSec = sec;
+      if(sec > 0 && sec < QUESTION_TIME_MS / 1000) sfx(sec <= 5 ? 'tickUrgent' : 'tick', timer.ticks++);
+    }
+    if(ms <= 0){ stopTimerLoop(); onTimeUp(); }
+  }
+
+  function stopTimerLoop(){ if(timer.id){ clearInterval(timer.id); timer.id = null; } }
+
+  function resumeTimer(){
+    if(timer.id) return;
+    timer.deadline = performance.now() + timer.remaining;
+    timer.id = setInterval(timerLoop, 100);
+    timerLoop();
+  }
+
+  function pauseTimer(){
+    if(!timer.id) return;
+    timer.remaining = Math.max(0, timer.deadline - performance.now());
+    stopTimerLoop();
+  }
+
+  function startTimer(){
+    stopTimerLoop();
+    timer.remaining = QUESTION_TIME_MS;
+    timer.lastSec = null;
+    timer.ticks = 0;
+    timer.pausedByTab = false;
+    document.getElementById('timer-wrap').classList.remove('hidden');
+    renderTimer(QUESTION_TIME_MS);
+    resumeTimer();
+  }
+
+  function hideTimer(){
+    stopTimerLoop();
+    timer.pausedByTab = false;
+    document.getElementById('timer-wrap').classList.add('hidden');
+  }
+
+  // Don't burn the player's time while the tab is in the background
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.hidden){
+      if(timer.id){ pauseTimer(); timer.pausedByTab = true; }
+    } else if(timer.pausedByTab){
+      timer.pausedByTab = false;
+      resumeTimer();
+    }
+  });
+
+  function onTimeUp(){
+    if(state.resolving) return;
+    const q = currentQuestion();
+    if(!q) return;
+    sfx('timeUp');
+
+    // lock every input so nothing can be answered after the buzzer
+    document.querySelectorAll('#mcq-choices .choice-btn').forEach(b=>{
+      b.disabled = true;
+      if(b.textContent === q.correct_answer) b.classList.add('is-correct');
+    });
+    document.getElementById('short-answer-input').disabled = true;
+    document.getElementById('submit-short').disabled = true;
+    document.getElementById('buzz-p1').disabled = true;
+    document.getElementById('buzz-p2').disabled = true;
+
+    const maxPts = q.type === 'mcq' ? 1 : 2;
+    const correctText = q.type === 'mcq' ? q.correct_answer : (q.ideal_answer || '');
+
+    // PvP and nobody buzzed in: nobody is hurt, move on
+    if(state.mode === 'pvp' && !state.activePvpPlayer){
+      state.resolving = true;
+      state.review.push({ question:q.question, type:q.type, chosen:"⏰ Nobody buzzed in", correct:correctText, explanation:q.explanation, earned:0, max:maxPts });
+      state.totalMax += maxPts;
+      toast("⏰ Time's up! Nobody buzzed in.", 1600);
+      setTimeout(nextStep, 1400);
+      return;
+    }
+
+    // PvE: counts as a wrong answer, so the monster attacks the player.
+    // PvP: the player who buzzed but didn't answer gets hit by the opponent.
+    logAndResolve({
+      question: q.question,
+      type: q.type,
+      chosen: "⏰ Time's up (no answer)",
+      correct: correctText,
+      explanation: q.explanation,
+      earned: 0,
+      max: maxPts
+    }, false, { timeout: true });
+  }
+
   /* ===================== Question rendering ===================== */
   function currentQuestion(){ return state.questions[state.currentIndex]; }
 
   function renderQuestion(){
     const q = currentQuestion();
     if(!q){ return endBattle(); }
+
+    state.resolving = false;
+    document.getElementById('short-answer-input').disabled = false;
+    document.getElementById('submit-short').disabled = false;
 
     ensureEnemy();
 
@@ -2164,6 +2319,8 @@ ${typeInstruction}`;
     } else {
       unlockAnswering();
     }
+
+    startTimer();
   }
 
   function lockBuzzer(who, cb){
@@ -2191,6 +2348,8 @@ ${typeInstruction}`;
   }
 
   function handleMcqAnswer(choice, btnEl){
+    if(state.resolving) return;
+    pauseTimer();
     const q = currentQuestion();
     const isCorrect = choice === q.correct_answer;
     document.querySelectorAll('#mcq-choices .choice-btn').forEach(b=>{
@@ -2211,10 +2370,12 @@ ${typeInstruction}`;
   }
 
   document.getElementById('submit-short').addEventListener('click', async ()=>{
+    if(state.resolving) return;
     const q = currentQuestion();
     const input = document.getElementById('short-answer-input');
     const answer = input.value.trim();
     if(!answer){ sfx('error'); toast("Type an answer first!", 1400); return; }
+    pauseTimer();   // grading time (network) must not count against the player
     const btn = document.getElementById('submit-short');
     btn.disabled = true;
     btn.textContent = "Grading…";
@@ -2228,6 +2389,7 @@ ${typeInstruction}`;
       showErrorBox('battle-error', describeAIError(err));
       btn.disabled = false;
       btn.textContent = "Submit Answer";
+      resumeTimer();   // grading failed, so give the player their remaining time back
       return;
     }
     btn.disabled = false;
@@ -2245,8 +2407,11 @@ ${typeInstruction}`;
     }, isCorrect);
   });
 
-  function logAndResolve(entry, isCorrect){
-    sfx(isCorrect ? 'correct' : 'wrong');
+  function logAndResolve(entry, isCorrect, opts){
+    const timedOut = !!(opts && opts.timeout);
+    state.resolving = true;
+    pauseTimer();
+    if(!timedOut) sfx(isCorrect ? 'correct' : 'wrong');
     state.review.push(entry);
     state.totalScore += entry.earned;
     state.totalMax += entry.max;
@@ -2276,7 +2441,7 @@ ${typeInstruction}`;
         const defeatedName = defender === 'p1' ? state.p1.name : state.p2.name;
         toast(defeatedName + " has been defeated!", 1900);
       } else {
-        toast(isCorrect ? "Correct! " + dmg + " damage dealt." : "Not quite — " + dmg + " damage taken.", 1800);
+        toast(isCorrect ? "Correct! " + dmg + " damage dealt." : (timedOut ? "⏰ Time's up! " + dmg + " damage taken." : "Not quite — " + dmg + " damage taken."), 1800);
       }
       setTimeout(nextStep, 1200);
     }
@@ -2316,6 +2481,7 @@ ${typeInstruction}`;
   /* Bonus boss round: once the shark boss is beaten, fresh questions are fetched and the
      Kraken octopus (3 hits) rises. Beating it is a bonus; losing to it still counts as a win. */
   async function startOctopusRound(){
+    hideTimer();
     state.octopusSpawned = true;
     sfx('bonus');
     toast("🐙 BONUS BOSS — the Kraken rises!", 2600);
@@ -2355,6 +2521,7 @@ ${typeInstruction}`;
   }
 
   async function loadBonusQuestions(){
+    hideTimer();
     sfx('bonus');
     toast(state.octopusSpawned ? "⚡ BONUS ROUND — finish the Kraken!" : (state.bossSpawned ? "⚡ BONUS ROUND — finish the boss!" : "⚡ BONUS ROUND — the boss is coming!"), 2200);
     document.getElementById('q-counter').textContent = '⚡ Bonus round';
@@ -2382,6 +2549,7 @@ ${typeInstruction}`;
 
   /* ===================== Summary ===================== */
   function endBattle(){
+    hideTimer();
     let resultText, resultSub;
     if(state.mode === 'pvp'){
       if(state.p1.hp <= 0 && state.p2.hp <= 0){ resultText = "DRAW"; resultSub = "Both players went down together."; }
