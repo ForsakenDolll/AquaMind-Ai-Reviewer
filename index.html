@@ -476,7 +476,6 @@
   @keyframes fishBob{ from{ transform:translateY(-7px); } to{ transform:translateY(7px); } }
   .fish-tail{ transform-origin:11px 12px; animation: tailWag .4s ease-in-out infinite alternate; }
   @keyframes tailWag{ from{ transform:rotate(-16deg); } to{ transform:rotate(16deg); } }
-  @media (prefers-reduced-motion: reduce){ .sway,.sway-s,.twinkle,.fish-mover,.fish-bob,.fish-tail{ animation:none; } }
 
   /* ---------- Glowing jellyfish ---------- */
   .jelly-mover{ position:absolute; top:0; left:var(--jx); will-change:transform; animation: jellyRise var(--dur,60s) linear infinite; animation-delay:var(--dl,0s); }
@@ -489,7 +488,6 @@
   @keyframes jellyPulse{ 0%,100%{ transform:scale(1,1); } 45%{ transform:scale(1.08,.88); } }
   .jelly-tent{ transform-origin:30px 34px; animation: jellySway 2.4s ease-in-out infinite; }
   @keyframes jellySway{ 0%,100%{ transform:skewX(-4deg) scaleY(1); } 45%{ transform:skewX(4deg) scaleY(1.08); } }
-  @media (prefers-reduced-motion: reduce){ .jelly-mover,.jelly-drift,.jelly-glow,.jelly-bell,.jelly-tent{ animation:none; } }
 </style>
 </head>
 <body>
