@@ -527,6 +527,19 @@
   @keyframes jellyPulse{ 0%,100%{ transform:scale(1,1); } 45%{ transform:scale(1.08,.88); } }
   .jelly-tent{ transform-origin:30px 34px; animation: jellySway 2.4s ease-in-out infinite; }
   @keyframes jellySway{ 0%,100%{ transform:skewX(-4deg) scaleY(1); } 45%{ transform:skewX(4deg) scaleY(1.08); } }
+
+  /* ---------- Leaderboard ---------- */
+  .lb-row{ display:grid; grid-template-columns:2.2rem 1fr auto; gap:.6rem; align-items:center; padding:.6rem .75rem; border-radius:12px; border:1px solid var(--line); background:rgba(4,18,28,0.45); }
+  .lb-row.top1{ border-color:rgba(255,201,107,.6); box-shadow:0 0 18px -6px rgba(255,201,107,.55); }
+  .lb-row.me{ border-color:var(--cyan); background:rgba(77,232,224,0.1); }
+  .lb-rank{ font-family:'Orbitron',sans-serif; font-weight:700; color:var(--foam-dim); text-align:center; }
+  .lb-row.top1 .lb-rank{ color:var(--gold); }
+  .lb-name{ font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lb-meta{ font-size:.7rem; color:var(--foam-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lb-pts{ font-family:'Orbitron',sans-serif; font-weight:700; color:var(--cyan); text-align:right; }
+  .lb-pts small{ display:block; font-family:'Inter',sans-serif; font-weight:500; font-size:.65rem; color:var(--foam-dim); }
+  .lb-tab{ padding:.5rem .9rem; border-radius:999px; border:1px solid var(--line); background:rgba(4,18,28,.5); color:var(--foam-dim); font-size:.8rem; font-weight:600; touch-action:manipulation; }
+  .lb-tab.on{ color:#04141c; background:var(--cyan); border-color:var(--cyan); }
 </style>
 </head>
 <body>
@@ -549,6 +562,10 @@
     </header>
 
     <form id="setup-form" class="panel p-5 sm:p-7 space-y-4">
+      <div>
+        <label class="label-tag" for="f-username">Username (for the leaderboard)</label>
+        <input id="f-username" class="field-input" type="text" maxlength="16" minlength="3" pattern="[A-Za-z0-9 _\-]{3,16}" autocomplete="nickname" placeholder="3-16 letters, numbers, _ or -">
+      </div>
       <div>
         <label class="label-tag" for="f-topic">Topic</label>
         <input id="f-topic" class="field-input" type="text" placeholder="e.g. Ocean Ecosystems, World War II, Fractions…" required value="Ocean Ecosystems">
@@ -590,6 +607,7 @@
       <button type="submit" id="start-btn" class="btn-primary w-full font-display text-base mt-2">
         ⚡ START GAME
       </button>
+      <button type="button" id="open-lb-setup" class="btn-ghost w-full">🏆 LEADERBOARD</button>
       <p id="setup-status" class="text-xs text-center min-h-[1rem]" style="color:var(--foam-dim);"></p>
       <div id="setup-error" class="hidden rounded-xl p-3 text-xs" style="border:1px solid var(--coral); background:rgba(255,107,107,0.08);">
         <p id="setup-error-title" class="font-arcade mb-2" style="font-size:0.6rem; color:#FF8F8F; line-height:1.6;"></p>
@@ -702,7 +720,41 @@
       <div id="review-list" class="space-y-3"></div>
     </div>
 
-    <button id="play-again-btn" class="btn-primary w-full font-display">↻ PLAY AGAIN</button>
+    <div id="lb-submit-panel" class="panel p-5 sm:p-6 mb-5 hidden">
+      <h3 class="font-arcade mb-3" style="font-size:0.65rem; color:var(--foam-dim);">LEADERBOARD</h3>
+      <p id="lb-submit-status" class="text-sm mb-3"></p>
+      <div id="lb-submit-form" class="hidden space-y-3">
+        <input id="lb-submit-name" class="field-input" type="text" maxlength="16" placeholder="Pick a username (3-16 characters)">
+        <button type="button" id="lb-submit-btn" class="btn-primary w-full">Save my score</button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 gap-3">
+      <button id="play-again-btn" class="btn-primary font-display">↻ PLAY AGAIN</button>
+      <button id="open-lb-summary" type="button" class="btn-ghost">🏆 LEADERBOARD</button>
+    </div>
+  </section>
+
+  <!-- ================= LEADERBOARD SCREEN ================= -->
+  <section id="screen-leaderboard" class="screen w-full max-w-xl">
+    <header class="text-center mb-5">
+      <h1 class="font-arcade neon-yellow" style="font-size:clamp(1rem,5vw,1.6rem);">LEADERBOARD</h1>
+      <p class="text-xs mt-2" style="color:var(--foam-dim);">Points = 10 × difficulty bonus × score × accuracy. Easy ×1, Medium ×1.5, Hard ×2.</p>
+    </header>
+    <div class="panel p-4 sm:p-5 mb-4">
+      <div id="lb-diff-tabs" class="flex flex-wrap gap-2 mb-3">
+        <button type="button" class="lb-tab on" data-d="all">All</button>
+        <button type="button" class="lb-tab" data-d="Easy">Easy</button>
+        <button type="button" class="lb-tab" data-d="Medium">Medium</button>
+        <button type="button" class="lb-tab" data-d="Hard">Hard</button>
+      </div>
+      <label class="label-tag" for="lb-cat">Topic category</label>
+      <select id="lb-cat" class="field-input">
+        <option value="all">All topics</option>
+      </select>
+    </div>
+    <div id="lb-list" class="space-y-2 mb-5"></div>
+    <button id="lb-back-btn" type="button" class="btn-primary w-full font-display">← BACK</button>
   </section>
 
 </div>
@@ -1712,8 +1764,10 @@
       topic: document.getElementById('f-topic').value.trim() || "General Knowledge",
       difficulty: document.getElementById('f-difficulty').value,
       mode: document.querySelector('input[name="mode"]:checked').value,
-      qtype: document.getElementById('f-qtype').value
+      qtype: document.getElementById('f-qtype').value,
+      username: document.getElementById('f-username').value.trim()
     };
+    if(state.config.username){ lbSetName(state.config.username); }
     state.mode = state.config.mode;
 
     startBtn.disabled = true;
@@ -2608,10 +2662,139 @@ ${typeInstruction}`;
     sfx('bossEnd');
     sfx(resultText === 'DRAW' ? 'draw' : (resultText === 'DEFEAT' ? 'defeat' : 'victory'));
     showScreen('screen-summary');
+    prepareLeaderboardSubmit();
   }
 
   function escapeHtml(str){
     return String(str).replace(/[&<>"']/g, s=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
+  }
+
+
+  /* ===================== Leaderboard ===================== */
+  const LB_ENDPOINT = "/.netlify/functions/leaderboard";
+  const LB_CATEGORIES = ["Science","Math","History","Geography","Nature & Ocean","Technology","Arts & Literature","Entertainment","Sports","Language","Health","Society & Culture","General Knowledge","Other"];
+  const LB_NAME_RE = /^[A-Za-z0-9 _-]{3,16}$/;
+  let lbReturnTo = 'screen-setup';
+  const lb = { difficulty:'all', category:'all', submitted:false };
+
+  function lbGetName(){ try{ return localStorage.getItem('aquamind-username') || ''; }catch(e){ return ''; } }
+  function lbSetName(n){ try{ localStorage.setItem('aquamind-username', n); }catch(e){} }
+
+  (function initLbUi(){
+    const nameInput = document.getElementById('f-username');
+    nameInput.value = lbGetName();
+    const sel = document.getElementById('lb-cat');
+    LB_CATEGORIES.forEach(c=>{ const o = document.createElement('option'); o.value = c; o.textContent = c; sel.appendChild(o); });
+    sel.addEventListener('change', ()=>{ lb.category = sel.value; loadLeaderboard(); });
+    document.querySelectorAll('#lb-diff-tabs .lb-tab').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        document.querySelectorAll('#lb-diff-tabs .lb-tab').forEach(b=>b.classList.remove('on'));
+        btn.classList.add('on');
+        lb.difficulty = btn.dataset.d;
+        loadLeaderboard();
+      });
+    });
+    document.getElementById('open-lb-setup').addEventListener('click', ()=>openLeaderboard('screen-setup'));
+    document.getElementById('open-lb-summary').addEventListener('click', ()=>openLeaderboard('screen-summary'));
+    document.getElementById('lb-back-btn').addEventListener('click', ()=>showScreen(lbReturnTo));
+    document.getElementById('lb-submit-btn').addEventListener('click', ()=>{
+      const n = document.getElementById('lb-submit-name').value.trim();
+      if(!LB_NAME_RE.test(n)){ toast("Username needs 3-16 letters, numbers, spaces, _ or -", 2400); return; }
+      state.config.username = n;
+      lbSetName(n);
+      submitScore();
+    });
+  })();
+
+  function openLeaderboard(from){
+    lbReturnTo = from;
+    showScreen('screen-leaderboard');
+    loadLeaderboard();
+  }
+
+  async function loadLeaderboard(){
+    const list = document.getElementById('lb-list');
+    list.innerHTML = '<p class="text-sm text-center" style="color:var(--foam-dim)">Loading scores…</p>';
+    try{
+      const url = LB_ENDPOINT + '?difficulty=' + encodeURIComponent(lb.difficulty) + '&category=' + encodeURIComponent(lb.category);
+      const res = await fetch(url);
+      if(!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      const me = lbGetName().toLowerCase();
+      if(!data.entries || !data.entries.length){
+        list.innerHTML = '<div class="panel p-5 text-center text-sm" style="color:var(--foam-dim)">No scores here yet. Finish a Single Player game to claim the first spot.</div>';
+        return;
+      }
+      list.innerHTML = data.entries.map(e=>`
+        <div class="lb-row ${e.rank===1?'top1':''} ${e.name.toLowerCase()===me?'me':''}">
+          <div class="lb-rank">${e.rank}</div>
+          <div style="min-width:0">
+            <div class="lb-name">${escapeHtml(e.name)}</div>
+            <div class="lb-meta">${escapeHtml(e.category)} · ${escapeHtml(e.difficulty)} · ${escapeHtml(e.topic)}</div>
+          </div>
+          <div class="lb-pts">${e.points}<small>${e.accuracy}% · ${e.score}/${e.max}</small></div>
+        </div>`).join('');
+    }catch(err){
+      console.error('Leaderboard load failed:', err);
+      list.innerHTML = '<div class="panel p-5 text-center text-sm" style="border-color:var(--coral); color:var(--foam)">Could not load the leaderboard. Check that netlify/functions/leaderboard.js is deployed and package.json is in the repo root.</div>';
+    }
+  }
+
+  // Called from endBattle() for Single Player games.
+  function prepareLeaderboardSubmit(){
+    const panel = document.getElementById('lb-submit-panel');
+    const status = document.getElementById('lb-submit-status');
+    const form = document.getElementById('lb-submit-form');
+    lb.submitted = false;
+    if(state.mode !== 'pve'){ panel.classList.add('hidden'); return; }
+    panel.classList.remove('hidden');
+    if(state.totalMax < 5){
+      status.textContent = "Answer at least 5 points' worth of questions to be ranked.";
+      form.classList.add('hidden');
+      return;
+    }
+    const name = (state.config.username || '').trim();
+    if(LB_NAME_RE.test(name)){
+      form.classList.add('hidden');
+      submitScore();
+    } else {
+      status.textContent = "Pick a username to put this score on the leaderboard.";
+      document.getElementById('lb-submit-name').value = lbGetName();
+      form.classList.remove('hidden');
+    }
+  }
+
+  async function submitScore(){
+    if(lb.submitted) return;
+    lb.submitted = true;
+    const status = document.getElementById('lb-submit-status');
+    const form = document.getElementById('lb-submit-form');
+    form.classList.add('hidden');
+    status.textContent = "Saving your score…";
+    try{
+      const res = await fetch(LB_ENDPOINT, {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({
+          username: state.config.username,
+          topic: state.config.topic,
+          difficulty: state.config.difficulty,
+          score: state.totalScore,
+          max: state.totalMax
+        })
+      });
+      const data = await res.json().catch(()=>({}));
+      if(!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+      status.innerHTML = escapeHtml(state.config.username) + ' earned <b style="color:var(--cyan)">' + data.points + ' points</b> in <b>' + escapeHtml(data.category) + '</b> (' + escapeHtml(state.config.difficulty) + ').' +
+        (data.rank ? ' Rank <b style="color:var(--gold)">#' + data.rank + '</b> in that category.' : '') +
+        (data.improved === false ? ' Your earlier score there is still higher, so it stays.' : '');
+    }catch(err){
+      console.error('Score submit failed:', err);
+      lb.submitted = false;
+      status.textContent = "Couldn't save your score: " + err.message;
+      form.classList.remove('hidden');
+      document.getElementById('lb-submit-name').value = state.config.username || lbGetName();
+    }
   }
 
   document.getElementById('play-again-btn').addEventListener('click', ()=>{
