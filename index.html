@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover">
 <title>AquaMind — Dive Into Knowledge</title>
-<script src="https://cdn.tailwindcss.com"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Orbitron:wght@500;700;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -576,6 +575,8 @@
     .lb-side-list{ max-height:calc(100vh - 14rem); }
   }
 </style>
+<!-- Prebuilt Tailwind utilities (replaces the runtime CDN). Rebuild with: npx tailwindcss -i in.css -o tailwind.css --minify -->
+<link rel="stylesheet" href="tailwind.css">
 </head>
 <body>
 
@@ -2040,7 +2041,50 @@
     return out;
   }
 
+  /* ---- Fast start: big quizzes are written as parallel batches of <=5 questions ---- */
+  const QUESTIONS_PER_CALL = 5;
+
+  function pickAngleSets(parts, per){
+    const pool = QUESTION_ANGLES.slice();
+    for(let i = pool.length - 1; i > 0; i--){ const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+    return Array.from({ length: parts }, (_, i)=>pool.slice(i * per, i * per + per));
+  }
+  const qWords = s => new Set(String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(w=>w.length > 2));
+  function nearDuplicate(a, b){
+    const A = qWords(a), B = qWords(b);
+    if(A.size < 5 || B.size < 5) return false;   // too short to judge reliably
+    let hit = 0; A.forEach(w=>{ if(B.has(w)) hit++; });
+    return hit / (A.size + B.size - hit) >= 0.8;
+  }
+
   async function generateQuestions(cfg, opts){
+    opts = opts || {};
+    const total = opts.count || QUESTION_COUNT_BY_DIFFICULTY[cfg.difficulty] || 5;
+    const parts = Math.ceil(total / QUESTIONS_PER_CALL);
+    if(parts <= 1) return generateBatch(cfg, Object.assign({}, opts, { count: total }));
+
+    const sizes = []; let left = total;
+    for(let i = 0; i < parts; i++){ const n = Math.ceil(left / (parts - i)); sizes.push(n); left -= n; }
+    const angleSets = pickAngleSets(parts, 3);
+
+    const run = (i)=>{
+      const o = Object.assign({}, opts, { count: sizes[i], angles: angleSets[i], part: [i + 1, parts] });
+      return generateBatch(cfg, o).catch(()=>generateBatch(cfg, o)); // one retry for a flaky batch
+    };
+    const settled = await Promise.allSettled(sizes.map((_, i)=>run(i)));
+    const ok = settled.filter(r=>r.status === 'fulfilled');
+    if(!ok.length) throw settled[0].reason;               // every batch failed: surface the real error
+
+    const merged = [], dropped = [];
+    ok.forEach(r=>r.value.forEach(q=>{
+      (merged.some(m=>nearDuplicate(m.question, q.question)) ? dropped : merged).push(q);
+    }));
+    // Never let de-duplication shrink the game: top back up from the dropped ones if needed.
+    while(dropped.length && merged.length < Math.ceil(total * 0.8)) merged.push(dropped.shift());
+    return merged.slice(0, total);
+  }
+
+  async function generateBatch(cfg, opts){
     opts = opts || {};
     const qCount = opts.count || QUESTION_COUNT_BY_DIFFICULTY[cfg.difficulty] || 5;
     const seen = [];
@@ -2049,7 +2093,7 @@
       if(s && !seen.includes(s)) seen.push(s);
     });
     const avoidText = seen.length ? '\nThe player has already seen these questions on this topic. Do not repeat, rephrase or closely imitate any of them:\n- ' + seen.slice(-50).join('\n- ') : '';
-    const varietyText = `\nVariation seed: ${Math.random().toString(36).slice(2, 10)}. Treat every request as a brand-new quiz: skip the most obvious textbook questions, spread the questions across different subtopics, and for this batch lean toward: ${pickAngles(3).join('; ')}. For multiple_choice, put the correct answer in a random position among the 4 choices.`;
+    const varietyText = `\nVariation seed: ${Math.random().toString(36).slice(2, 10)}. Treat every request as a brand-new quiz: skip the most obvious textbook questions, spread the questions across different subtopics, and for this batch lean toward: ${(opts.angles || pickAngles(3)).join('; ')}.${opts.part ? ` This is part ${opts.part[0]} of ${opts.part[1]} of one quiz and the other parts are written separately, so stay on your own angles and be specific.` : ''} For multiple_choice, put the correct answer in a random position among the 4 choices.`;
     const typeInstruction = cfg.qtype === "mixed"
       ? "Mix multiple_choice and short_answer question types roughly evenly."
       : (cfg.qtype === "mcq" ? "All questions must be type 'multiple_choice'." : "All questions must be type 'short_answer'.");
