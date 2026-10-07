@@ -540,6 +540,8 @@
   .lb-pts small{ display:block; font-family:'Inter',sans-serif; font-weight:500; font-size:.65rem; color:var(--foam-dim); }
   .lb-tab{ padding:.5rem .9rem; border-radius:999px; border:1px solid var(--line); background:rgba(4,18,28,.5); color:var(--foam-dim); font-size:.8rem; font-weight:600; touch-action:manipulation; }
   .lb-tab.on{ color:#04141c; background:var(--cyan); border-color:var(--cyan); }
+  #pause-overlay{ position:fixed; inset:0; z-index:80; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1rem; padding:1rem; background:rgba(2,10,16,.9); -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px); }
+  #pause-overlay.hidden{ display:none; }
   /* Setup screen: form on the left, live leaderboard on the right (stacks below on narrow screens) */
   #screen-setup.active{ max-width:36rem; }
   .setup-grid{ display:grid; gap:1.25rem; align-items:start; }
@@ -558,6 +560,14 @@
 <canvas id="caustics-canvas"></canvas>
 <div id="bubble-field"></div>
 <div id="damage-vignette"></div>
+
+<!-- Pause overlay: hides the question so pausing can't be used to stall and look it up -->
+<div id="pause-overlay" class="hidden" role="dialog" aria-modal="true" aria-label="Game paused">
+  <h2 class="font-arcade neon-yellow" style="font-size:clamp(1.2rem,6vw,2rem);">PAUSED</h2>
+  <p class="text-sm" style="color:var(--foam-dim);">Your timer is stopped.</p>
+  <button id="resume-btn" type="button" class="btn-primary font-display" style="min-width:12rem;">▶ RESUME</button>
+  <button id="quit-btn" type="button" class="btn-ghost" style="min-width:12rem;">Quit to menu</button>
+</div>
 
 <div id="app" class="relative z-10 app-fullscreen px-3 py-4 sm:py-8 flex flex-col items-center">
 
@@ -691,7 +701,10 @@
         <div id="timer-wrap" class="mb-3">
           <div class="flex items-center justify-between mb-1">
             <span class="font-arcade" style="font-size:0.5rem; color:var(--foam-dim);">⏱ TIME LEFT</span>
-            <span id="timer-text" class="timer-text">15</span>
+            <span class="flex items-center gap-2">
+              <span id="timer-text" class="timer-text">15</span>
+              <button id="pause-btn" type="button" class="btn-ghost" style="padding:.25rem .6rem; font-size:.7rem; min-height:0;" aria-label="Pause game">⏸ PAUSE</button>
+            </span>
           </div>
           <div class="hp-track" style="height:10px;"><div id="timer-fill" class="timer-fill"></div></div>
         </div>
@@ -1961,10 +1974,52 @@
 
   const QUESTION_COUNT_BY_DIFFICULTY = { Easy: 5, Medium: 10, Hard: 15 };
 
+  /* ---- Question variety: remember what a topic has already asked, and vary each request ---- */
+  const QHIST_KEY = 'aquamind-qhistory';
+  const QHIST_PER_TOPIC = 40, QHIST_TOPICS = 30;
+  let qHistMem = {};
+  const qTopicKey = t => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  function qHistLoad(){
+    try{ return JSON.parse(localStorage.getItem(QHIST_KEY) || '{}') || {}; }catch(e){ return qHistMem; }
+  }
+  function qHistSave(all){
+    qHistMem = all;
+    try{ localStorage.setItem(QHIST_KEY, JSON.stringify(all)); }catch(e){}
+  }
+  function qHistGet(topic){ return qHistLoad()[qTopicKey(topic)] || []; }
+  function qHistAdd(topic, questions){
+    const all = qHistLoad(), k = qTopicKey(topic);
+    const merged = (all[k] || []).concat(questions).slice(-QHIST_PER_TOPIC);
+    delete all[k];            // re-insert so the most recently used topics stay at the end
+    all[k] = merged;
+    const keys = Object.keys(all);
+    keys.slice(0, Math.max(0, keys.length - QHIST_TOPICS)).forEach(x => delete all[x]);
+    qHistSave(all);
+  }
+  const QUESTION_ANGLES = [
+    'lesser-known facts and surprising details', 'real-world applications and everyday examples',
+    'cause-and-effect and "why" reasoning', 'comparisons and contrasts between related things',
+    'famous people, places or events connected to the topic', 'numbers, dates, scales and measurements',
+    'common misconceptions and myths', 'vocabulary, terms and definitions',
+    'processes and how things work step by step', 'records, extremes and "firsts"',
+    'scenario-based or "what would happen if" questions', 'connections to other fields'
+  ];
+  function pickAngles(n){
+    const pool = QUESTION_ANGLES.slice(), out = [];
+    while(out.length < n && pool.length) out.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+    return out;
+  }
+
   async function generateQuestions(cfg, opts){
     opts = opts || {};
     const qCount = opts.count || QUESTION_COUNT_BY_DIFFICULTY[cfg.difficulty] || 5;
-    const avoidText = (opts.avoid && opts.avoid.length) ? '\nDo not repeat or rephrase any of these existing questions:\n- ' + opts.avoid.join('\n- ') : '';
+    const seen = [];
+    (opts.avoid || []).concat(qHistGet(cfg.topic)).forEach(q=>{
+      const s = String(q || '').slice(0, 140);
+      if(s && !seen.includes(s)) seen.push(s);
+    });
+    const avoidText = seen.length ? '\nThe player has already seen these questions on this topic. Do not repeat, rephrase or closely imitate any of them:\n- ' + seen.slice(-50).join('\n- ') : '';
+    const varietyText = `\nVariation seed: ${Math.random().toString(36).slice(2, 10)}. Treat every request as a brand-new quiz: skip the most obvious textbook questions, spread the questions across different subtopics, and for this batch lean toward: ${pickAngles(3).join('; ')}. For multiple_choice, put the correct answer in a random position among the 4 choices.`;
     const typeInstruction = cfg.qtype === "mixed"
       ? "Mix multiple_choice and short_answer question types roughly evenly."
       : (cfg.qtype === "mcq" ? "All questions must be type 'multiple_choice'." : "All questions must be type 'short_answer'.");
@@ -1978,7 +2033,7 @@
 
 ${typeInstruction}`;
 
-    const userPrompt = `Topic: ${cfg.topic}\nDifficulty: ${cfg.difficulty}${avoidText}\nGenerate the questions now as raw JSON only.`;
+    const userPrompt = `Topic: ${cfg.topic}\nDifficulty: ${cfg.difficulty}${varietyText}${avoidText}\nGenerate the questions now as raw JSON only.`;
 
     const content = await callAI([
       { role: "system", content: systemPrompt },
@@ -2002,6 +2057,7 @@ ${typeInstruction}`;
     })).filter(q=>q.question && (q.type === "short" || (Array.isArray(q.choices) && q.correct_answer)));
 
     if(normalized.length === 0) throw new AIError("None of the AI questions had the required fields.", { code:'BAD_FORMAT' });
+    qHistAdd(cfg.topic, normalized.map(q=>q.question));
     return normalized;
   }
 
@@ -2306,8 +2362,41 @@ ${typeInstruction}`;
       if(timer.id){ pauseTimer(); timer.pausedByTab = true; }
     } else if(timer.pausedByTab){
       timer.pausedByTab = false;
-      resumeTimer();
+      if(!pauseState.on) resumeTimer(); // a manual pause stays paused until Resume is pressed
     }
+  });
+
+  /* ===================== Manual pause ===================== */
+  // Only available while a question is open and the clock is running (not while an answer is
+  // being graded or an attack animation plays), so there is nothing mid-flight to freeze.
+  const pauseState = { on:false };
+  function openPause(){
+    if(pauseState.on || !timer.id || state.resolving) return;
+    pauseTimer();
+    timer.pausedByTab = false;
+    pauseState.on = true;
+    document.getElementById('pause-overlay').classList.remove('hidden');
+    document.getElementById('resume-btn').focus();
+  }
+  function closePause(){
+    if(!pauseState.on) return;
+    pauseState.on = false;
+    document.getElementById('pause-overlay').classList.add('hidden');
+    resumeTimer();
+  }
+  document.getElementById('pause-btn').addEventListener('click', openPause);
+  document.getElementById('resume-btn').addEventListener('click', closePause);
+  document.getElementById('quit-btn').addEventListener('click', ()=>{
+    if(!confirm("Quit this game? Your progress and score won't be saved.")) return;
+    pauseState.on = false;
+    document.getElementById('pause-overlay').classList.add('hidden');
+    hideTimer();
+    showScreen('screen-setup');
+    loadSideLeaderboard();
+  });
+  document.addEventListener('keydown', e=>{
+    if(e.key !== 'Escape' || !document.getElementById('screen-battle').classList.contains('active')) return;
+    pauseState.on ? closePause() : openPause();
   });
 
   function onTimeUp(){
