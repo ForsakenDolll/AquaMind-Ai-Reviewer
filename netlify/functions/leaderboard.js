@@ -18,6 +18,21 @@
 // i.e. you need both volume (score) and accuracy (score / max) to rank high.
 
 const { connectLambda, getStore } = require("@netlify/blobs");
+const crypto = require("crypto");
+
+// Accounts: the first submission under a username sets its password (stored only as a salted
+// scrypt hash in the "aquamind-accounts" store). Every later submission under that name must
+// send the same password, so nobody else can post scores under (or merge into) your name.
+function hashPassword(password, saltHex) {
+  const salt = Buffer.from(saltHex, "hex");
+  return new Promise((resolve, reject) =>
+    crypto.scrypt(password, salt, 64, (err, key) => (err ? reject(err) : resolve(key.toString("hex"))))
+  );
+}
+function validPassword(raw) {
+  const pw = typeof raw === "string" ? raw : "";
+  return pw.length >= 4 && pw.length <= 64 ? pw : null;
+}
 
 const DEFAULT_MODEL = "openai/gpt-oss-120b";
 const MULTIPLIER = { Easy: 1, Medium: 1.5, Hard: 2 };
@@ -171,6 +186,9 @@ exports.handler = async function (event) {
   const name = cleanName(p.username);
   if (!name) return reply(400, { error: "Username must be 3-16 characters: letters, numbers, spaces, _ or -." });
 
+  const password = validPassword(p.password);
+  if (!password) return reply(400, { error: "Password must be 4-64 characters.", needPassword: true });
+
   const difficulty = String(p.difficulty || "");
   if (!MULTIPLIER[difficulty]) return reply(400, { error: "Unknown difficulty." });
 
@@ -191,6 +209,21 @@ exports.handler = async function (event) {
     return reply(429, { error: "Slow down - try again in a few seconds." });
   }
   await limits.set("ip-" + ip, String(Date.now()));
+
+  // Password check (this also sits behind the per-IP cooldown above, which slows guessing).
+  const accounts = getStore("aquamind-accounts");
+  const acctKey = "user-" + name.toLowerCase();
+  const acct = await accounts.get(acctKey, { type: "json" });
+  if (acct) {
+    const attempt = Buffer.from(await hashPassword(password, acct.salt), "hex");
+    const stored = Buffer.from(acct.hash, "hex");
+    if (attempt.length !== stored.length || !crypto.timingSafeEqual(attempt, stored)) {
+      return reply(401, { error: "Wrong password for that username.", needPassword: true });
+    }
+  } else {
+    const salt = crypto.randomBytes(16).toString("hex");
+    await accounts.setJSON(acctKey, { salt, hash: await hashPassword(password, salt), at: Date.now() });
+  }
 
   const category = await classifyTopic(topic);
   const points = calcPoints(difficulty, score, max);
