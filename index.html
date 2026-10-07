@@ -564,7 +564,8 @@
     <form id="setup-form" class="panel p-5 sm:p-7 space-y-4">
       <div>
         <label class="label-tag" for="f-username">Username (for the leaderboard)</label>
-        <input id="f-username" class="field-input" type="text" maxlength="16" minlength="3" pattern="[A-Za-z0-9 _\-]{3,16}" autocomplete="nickname" placeholder="3-16 letters, numbers, _ or -">
+        <input id="f-username" class="field-input" type="text" maxlength="16" minlength="3" pattern="[A-Za-z0-9 _\-]{3,16}" autocomplete="username" placeholder="3-16 letters, numbers, _ or -">
+        <input id="f-password" class="field-input" style="margin-top:0.5rem" type="password" minlength="4" maxlength="64" autocomplete="current-password" placeholder="Password (new name? this sets it)">
       </div>
       <div>
         <label class="label-tag" for="f-topic">Topic</label>
@@ -724,7 +725,8 @@
       <h3 class="font-arcade mb-3" style="font-size:0.65rem; color:var(--foam-dim);">LEADERBOARD</h3>
       <p id="lb-submit-status" class="text-sm mb-3"></p>
       <div id="lb-submit-form" class="hidden space-y-3">
-        <input id="lb-submit-name" class="field-input" type="text" maxlength="16" placeholder="Pick a username (3-16 characters)">
+        <input id="lb-submit-name" class="field-input" type="text" maxlength="16" autocomplete="username" placeholder="Pick a username (3-16 characters)">
+        <input id="lb-submit-pass" class="field-input" type="password" minlength="4" maxlength="64" autocomplete="current-password" placeholder="Password (new name? this sets it)">
         <button type="button" id="lb-submit-btn" class="btn-primary w-full">Save my score</button>
       </div>
     </div>
@@ -1765,9 +1767,11 @@
       difficulty: document.getElementById('f-difficulty').value,
       mode: document.querySelector('input[name="mode"]:checked').value,
       qtype: document.getElementById('f-qtype').value,
-      username: document.getElementById('f-username').value.trim()
+      username: document.getElementById('f-username').value.trim(),
+      password: document.getElementById('f-password').value
     };
     if(state.config.username){ lbSetName(state.config.username); }
+    if(state.config.password){ lbSetPass(state.config.password); }
     state.mode = state.config.mode;
 
     startBtn.disabled = true;
@@ -2679,10 +2683,13 @@ ${typeInstruction}`;
 
   function lbGetName(){ try{ return localStorage.getItem('aquamind-username') || ''; }catch(e){ return ''; } }
   function lbSetName(n){ try{ localStorage.setItem('aquamind-username', n); }catch(e){} }
+  function lbGetPass(){ try{ return localStorage.getItem('aquamind-password') || ''; }catch(e){ return ''; } }
+  function lbSetPass(p){ try{ localStorage.setItem('aquamind-password', p); }catch(e){} }
 
   (function initLbUi(){
     const nameInput = document.getElementById('f-username');
     nameInput.value = lbGetName();
+    document.getElementById('f-password').value = lbGetPass();
     const sel = document.getElementById('lb-cat');
     LB_CATEGORIES.forEach(c=>{ const o = document.createElement('option'); o.value = c; o.textContent = c; sel.appendChild(o); });
     sel.addEventListener('change', ()=>{ lb.category = sel.value; loadLeaderboard(); });
@@ -2700,8 +2707,12 @@ ${typeInstruction}`;
     document.getElementById('lb-submit-btn').addEventListener('click', ()=>{
       const n = document.getElementById('lb-submit-name').value.trim();
       if(!LB_NAME_RE.test(n)){ toast("Username needs 3-16 letters, numbers, spaces, _ or -", 2400); return; }
+      const pw = document.getElementById('lb-submit-pass').value;
+      if(pw.length < 4 || pw.length > 64){ toast("Password needs 4-64 characters", 2400); return; }
       state.config.username = n;
+      state.config.password = pw;
       lbSetName(n);
+      lbSetPass(pw);
       submitScore();
     });
   })();
@@ -2754,12 +2765,14 @@ ${typeInstruction}`;
       return;
     }
     const name = (state.config.username || '').trim();
-    if(LB_NAME_RE.test(name)){
+    const pw = state.config.password || '';
+    if(LB_NAME_RE.test(name) && pw.length >= 4){
       form.classList.add('hidden');
       submitScore();
     } else {
-      status.textContent = "Pick a username to put this score on the leaderboard.";
-      document.getElementById('lb-submit-name').value = lbGetName();
+      status.textContent = "Pick a username and password to put this score on the leaderboard.";
+      document.getElementById('lb-submit-name').value = name || lbGetName();
+      document.getElementById('lb-submit-pass').value = pw || lbGetPass();
       form.classList.remove('hidden');
     }
   }
@@ -2777,6 +2790,7 @@ ${typeInstruction}`;
         headers:{ 'Content-Type':'application/json' },
         body: JSON.stringify({
           username: state.config.username,
+          password: state.config.password,
           topic: state.config.topic,
           difficulty: state.config.difficulty,
           score: state.totalScore,
@@ -2794,6 +2808,7 @@ ${typeInstruction}`;
       status.textContent = "Couldn't save your score: " + err.message;
       form.classList.remove('hidden');
       document.getElementById('lb-submit-name').value = state.config.username || lbGetName();
+      document.getElementById('lb-submit-pass').value = '';
     }
   }
 
