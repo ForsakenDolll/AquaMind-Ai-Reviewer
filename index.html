@@ -540,6 +540,17 @@
   .lb-pts small{ display:block; font-family:'Inter',sans-serif; font-weight:500; font-size:.65rem; color:var(--foam-dim); }
   .lb-tab{ padding:.5rem .9rem; border-radius:999px; border:1px solid var(--line); background:rgba(4,18,28,.5); color:var(--foam-dim); font-size:.8rem; font-weight:600; touch-action:manipulation; }
   .lb-tab.on{ color:#04141c; background:var(--cyan); border-color:var(--cyan); }
+  /* Setup screen: form on the left, live leaderboard on the right (stacks below on narrow screens) */
+  #screen-setup.active{ max-width:36rem; }
+  .setup-grid{ display:grid; gap:1.25rem; align-items:start; }
+  .lb-side-list{ max-height:28rem; overflow-y:auto; }
+  .lb-side .lb-tab{ padding:.35rem .7rem; font-size:.72rem; }
+  @media (min-width:1024px){
+    #screen-setup.active{ max-width:64rem; }
+    .setup-grid{ grid-template-columns:minmax(0,36rem) minmax(0,1fr); }
+    .lb-side{ position:sticky; top:1rem; }
+    .lb-side-list{ max-height:calc(100vh - 14rem); }
+  }
 </style>
 </head>
 <body>
@@ -561,6 +572,7 @@
       <p class="text-sm" style="color:var(--foam-dim);">Dive in. Answer fast. Sink the monster before it sinks you.</p>
     </header>
 
+    <div class="setup-grid">
     <form id="setup-form" class="panel p-5 sm:p-7 space-y-4">
       <div>
         <label class="label-tag" for="f-username">Username (for the leaderboard)</label>
@@ -616,6 +628,18 @@
         <p id="setup-error-hint" style="color:var(--foam-dim);"></p>
       </div>
     </form>
+
+    <aside class="lb-side panel p-4 sm:p-5" aria-label="Leaderboard">
+      <h2 class="font-arcade neon-yellow mb-3" style="font-size:0.8rem;">🏆 TOP PLAYERS</h2>
+      <div id="lb-side-tabs" class="flex flex-wrap gap-2 mb-3">
+        <button type="button" class="lb-tab on" data-d="all">All</button>
+        <button type="button" class="lb-tab" data-d="Easy">Easy</button>
+        <button type="button" class="lb-tab" data-d="Medium">Medium</button>
+        <button type="button" class="lb-tab" data-d="Hard">Hard</button>
+      </div>
+      <div id="lb-side-list" class="lb-side-list space-y-2"></div>
+    </aside>
+    </div>
   </section>
 
   <!-- ================= BATTLE SCREEN ================= -->
@@ -2701,6 +2725,15 @@ ${typeInstruction}`;
         loadLeaderboard();
       });
     });
+    document.querySelectorAll('#lb-side-tabs .lb-tab').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        document.querySelectorAll('#lb-side-tabs .lb-tab').forEach(b=>b.classList.remove('on'));
+        btn.classList.add('on');
+        lb.sideDifficulty = btn.dataset.d;
+        loadSideLeaderboard();
+      });
+    });
+    loadSideLeaderboard();
     document.getElementById('open-lb-setup').addEventListener('click', ()=>openLeaderboard('screen-setup'));
     document.getElementById('open-lb-summary').addEventListener('click', ()=>openLeaderboard('screen-summary'));
     document.getElementById('lb-back-btn').addEventListener('click', ()=>showScreen(lbReturnTo));
@@ -2723,20 +2756,9 @@ ${typeInstruction}`;
     loadLeaderboard();
   }
 
-  async function loadLeaderboard(){
-    const list = document.getElementById('lb-list');
-    list.innerHTML = '<p class="text-sm text-center" style="color:var(--foam-dim)">Loading scores…</p>';
-    try{
-      const url = LB_ENDPOINT + '?difficulty=' + encodeURIComponent(lb.difficulty) + '&category=' + encodeURIComponent(lb.category);
-      const res = await fetch(url);
-      if(!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json();
-      const me = lbGetName().toLowerCase();
-      if(!data.entries || !data.entries.length){
-        list.innerHTML = '<div class="panel p-5 text-center text-sm" style="color:var(--foam-dim)">No scores here yet. Finish a Single Player game to claim the first spot.</div>';
-        return;
-      }
-      list.innerHTML = data.entries.map(e=>`
+  function lbRowsHtml(entries){
+    const me = lbGetName().toLowerCase();
+    return entries.map(e=>`
         <div class="lb-row ${e.rank===1?'top1':''} ${e.name.toLowerCase()===me?'me':''}">
           <div class="lb-rank">${e.rank}</div>
           <div style="min-width:0">
@@ -2745,6 +2767,40 @@ ${typeInstruction}`;
           </div>
           <div class="lb-pts">${e.points}<small>${e.accuracy}% · ${e.score}/${e.max}</small></div>
         </div>`).join('');
+  }
+
+  // Compact leaderboard shown beside the setup form.
+  async function loadSideLeaderboard(){
+    const list = document.getElementById('lb-side-list');
+    if(!list) return;
+    const d = lb.sideDifficulty || 'all';
+    try{
+      const res = await fetch(LB_ENDPOINT + '?difficulty=' + encodeURIComponent(d) + '&category=all');
+      if(!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      if(d !== (lb.sideDifficulty || 'all')) return; // a newer tab click superseded this request
+      list.innerHTML = (data.entries && data.entries.length)
+        ? lbRowsHtml(data.entries)
+        : '<div class="text-center text-sm p-3" style="color:var(--foam-dim)">No scores yet. Be the first!</div>';
+    }catch(err){
+      console.error('Side leaderboard load failed:', err);
+      list.innerHTML = '<div class="text-center text-sm p-3" style="color:var(--foam-dim)">Leaderboard unavailable right now.</div>';
+    }
+  }
+
+  async function loadLeaderboard(){
+    const list = document.getElementById('lb-list');
+    list.innerHTML = '<p class="text-sm text-center" style="color:var(--foam-dim)">Loading scores…</p>';
+    try{
+      const url = LB_ENDPOINT + '?difficulty=' + encodeURIComponent(lb.difficulty) + '&category=' + encodeURIComponent(lb.category);
+      const res = await fetch(url);
+      if(!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      if(!data.entries || !data.entries.length){
+        list.innerHTML = '<div class="panel p-5 text-center text-sm" style="color:var(--foam-dim)">No scores here yet. Finish a Single Player game to claim the first spot.</div>';
+        return;
+      }
+      list.innerHTML = lbRowsHtml(data.entries);
     }catch(err){
       console.error('Leaderboard load failed:', err);
       list.innerHTML = '<div class="panel p-5 text-center text-sm" style="border-color:var(--coral); color:var(--foam)">Could not load the leaderboard. Check that netlify/functions/leaderboard.js is deployed and package.json is in the repo root.</div>';
@@ -2814,6 +2870,7 @@ ${typeInstruction}`;
 
   document.getElementById('play-again-btn').addEventListener('click', ()=>{
     showScreen('screen-setup');
+    loadSideLeaderboard(); // pick up the score that was just saved
   });
 
 })();
